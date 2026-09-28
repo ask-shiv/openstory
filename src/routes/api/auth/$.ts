@@ -1,7 +1,8 @@
-import { assertDeviceLoginRate } from '@/lib/api-v1/device-auth';
-import { getAuth } from '@/lib/auth/config';
-import { pruneOrphanedOAuthClients } from '@/lib/db/scoped';
-import { getLogger } from '@/lib/observability/logger';
+import { assertDeviceLoginRate } from '@/platform/server/api-v1/device-auth';
+import { getAuth } from '@/platform/server/auth/config';
+import { inferNativeRegistration } from '@/platform/server/auth/oauth-client-registration';
+import { pruneOrphanedOAuthClients } from '@/platform/server/db/scoped';
+import { getLogger } from '@/platform/logger';
 import { createFileRoute } from '@tanstack/react-router';
 import { scheduleFlushAnalytics } from '#flush-scheduler';
 
@@ -16,9 +17,15 @@ const logger = getLogger(['openstory', 'api', 'auth']);
  */
 const CLIENT_REGISTRATION_PATH = '/api/auth/oauth2/register';
 
+function isClientRegistration(request: Request): boolean {
+  return (
+    request.method === 'POST' &&
+    new URL(request.url).pathname === CLIENT_REGISTRATION_PATH
+  );
+}
+
 async function guardClientRegistration(request: Request): Promise<void> {
-  if (request.method !== 'POST') return;
-  if (new URL(request.url).pathname !== CLIENT_REGISTRATION_PATH) return;
+  if (!isClientRegistration(request)) return;
   await assertDeviceLoginRate(request);
   try {
     const pruned = await pruneOrphanedOAuthClients();
@@ -40,7 +47,7 @@ async function guardClientRegistration(request: Request): Promise<void> {
  * but none for four days, and only two `user_signed_up` ever.
  *
  * Server functions avoid this because their middleware schedules the flush
- * (`src/functions/middleware.ts`); this route has no middleware, so it
+ * (`src/platform/middleware.fn.ts`); this route has no middleware, so it
  * schedules its own. `scheduleFlushAnalytics` routes through `waitUntil` on
  * Workers, so the response is not delayed.
  */
@@ -53,7 +60,13 @@ async function handleAuthRequest(request: Request): Promise<Response> {
     throw error;
   }
   const auth = getAuth();
-  const response = await auth.handler(request);
+  // A loopback client that does not say it is native is still one
+  // (`oauth-client-registration.ts`); the provider would refuse it as `web`.
+  const response = await auth.handler(
+    isClientRegistration(request)
+      ? await inferNativeRegistration(request)
+      : request
+  );
   await scheduleFlushAnalytics();
   return response;
 }

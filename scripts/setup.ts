@@ -73,7 +73,7 @@ async function localSetup() {
       process.exit(0);
     }
 
-    if (!raw || !raw.trim()) continue;
+    if (typeof raw !== 'string' || !raw.trim()) continue;
 
     // Accept either a raw value or a pasted KEY=VALUE line.
     const parsed = parseEnvString(raw);
@@ -102,7 +102,7 @@ async function localSetup() {
   );
 
   p.outro(
-    `Run ${chalk.bold('bun dev')} to start the development server.\nTo deploy to production, run: ${chalk.bold('bun setup --prod')}`
+    `Run ${chalk.bold('bun dev')} to start the development server.\nPublic HTTPS: ${chalk.bold('bun tunnel:provision')} then press t + Enter in bun dev.\nTo deploy to production, run: ${chalk.bold('bun setup --prod')}`
   );
 }
 

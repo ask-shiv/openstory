@@ -100,15 +100,12 @@ The AI model for generating scene images. You can select **multiple image models
 
 The AI model for image-to-video animation. Toggle **Auto-generate motion** to automatically create video clips for each scene after images are generated.
 
-| Model                  | Vendor     | Est. Time                          |
-| ---------------------- | ---------- | ---------------------------------- |
-| MiniMax H3 Max         | MiniMax    | ~10s (Turbo default; native audio) |
-| Seedance 2.0           | ByteDance  | ~3.5 min (Quality default; audio)  |
-| Grok Imagine Video 1.5 | SpaceXAI   | ~30s                               |
-| LTX 2.3 Pro            | Lightricks | ~2 min (open weight)               |
-| Veo 3.1                | Google     | ~2.5 min                           |
-| MiniMax Hailuo 2.3     | MiniMax    | ~3 min                             |
-| Kling v3 Pro           | Kling      | ~5 min                             |
+| Model                  | Vendor    | Est. Time                          |
+| ---------------------- | --------- | ---------------------------------- |
+| MiniMax H3 Max         | MiniMax   | ~10s (Turbo default; native audio) |
+| Seedance 2.0           | ByteDance | ~3.5 min (Quality default; audio)  |
+| Grok Imagine Video 1.5 | SpaceXAI  | ~30s                               |
+| Kling 3.0 Omni         | Kling     | ~5 min                             |
 
 ### Music Model
 
@@ -136,7 +133,7 @@ Both are marked as "optional" in the UI — sequences work fine without them.
 
 ## Style Selection
 
-Below the script editor, choose a **visual style** that defines the aesthetic of your sequence. Styles appear as a grid of tiles with preview images. Click any tile to select it, or click **More** to browse the full style catalog in a dialog.
+Below the script editor, choose a **visual style** that defines the aesthetic of your sequence. Styles appear as a grid of tiles with preview images — hover a tile to play its sample clip, click it to open the style dialog, then **Use this style** (or press Return). Click **More** to browse the full catalog. Recommend lives in the style-category menu.
 
 Each style includes configuration for color palette, artistic direction, and rendering approach. The selected style influences:
 
@@ -146,7 +143,7 @@ Each style includes configuration for color palette, artistic direction, and ren
 
 ## The Generation Pipeline
 
-Next to **Generate**, a **Quality | Turbo** switch picks the recommended default in each catalog (Turbo: Luna, Nano Banana 2 Lite, MiniMax H3 Max, ElevenLabs). Both modes show the full list, grouped Fast / Quality.
+The line under **Generate** names the current stop-at (**Whole sequence**, or **Stops after Casting**, and so on) and opens the stop-at dialog. Model pickers in generation settings still group Fast / Quality.
 
 When you click **Generate Sequence**, OpenStory runs an automated pipeline:
 

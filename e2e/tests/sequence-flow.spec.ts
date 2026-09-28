@@ -10,7 +10,10 @@
 import { expect } from 'playwright/test';
 import { test as testWithUser } from '../fixtures/auth.fixture';
 import { setupMockRoutes } from '../mocks/handlers';
-import { fillScriptEditor } from '../fixtures/test-utils';
+import {
+  fillScriptEditor,
+  openComposerReference,
+} from '../fixtures/test-utils';
 import {
   createTestTalentSet,
   cleanupTalentById,
@@ -86,9 +89,10 @@ Here's your caffeine fix. How's it going?
       // tiles by aria-label so the trailing "View all" tile is never picked.
       const firstStyle = page
         .getByRole('grid', { name: 'Style selection' })
-        .getByRole('button', { name: /^Select .+ style$/ })
+        .getByRole('button', { name: /^View .+ details$/ })
         .first();
       await firstStyle.click();
+      await page.getByRole('button', { name: /^Use the .+ style$/ }).click();
 
       // Now fill the editor - React is hydrated since style click worked
       await fillScriptEditor(page, testScript);
@@ -101,11 +105,7 @@ Here's your caffeine fix. How's it going?
         { timeout: 10000 }
       );
 
-      // Open talent suggestion dialog
-      const talentButton = page
-        .locator('main')
-        .getByRole('button', { name: 'Talent' });
-      await talentButton.click();
+      await openComposerReference(page, 'Talent');
 
       // Wait for talent dialog to open - the dialog is rendered via a portal
       // Use a longer timeout as it may need to fetch talent data
@@ -147,7 +147,7 @@ testWithUser.describe('Variant Selection', () => {
   let testSequence: TestSequence;
   let testShot: TestShot;
   const originalThumbnailUrl =
-    'http://localhost:3001/api/test/image?w=1024&h=576&label=thumb';
+    'http://localhost:3020/api/test/image?w=1024&h=576&label=thumb';
 
   testWithUser.beforeEach(async ({ page, testUser }) => {
     await setupMockRoutes(page);
@@ -162,7 +162,7 @@ testWithUser.describe('Variant Selection', () => {
       // Use real placeholder images
       thumbnailUrl: originalThumbnailUrl,
       variantImageUrl:
-        'http://localhost:3001/api/test/image?w=3072&h=3072&label=variants',
+        'http://localhost:3020/api/test/image?w=3072&h=3072&label=variants',
       variantImageStatus: 'completed',
     });
   });
@@ -299,7 +299,7 @@ testWithUser.describe('Character Recast', () => {
       {
         // Use real placeholder image
         sheetImageUrl:
-          'http://localhost:3001/api/test/image?w=1920&h=1080&label=character',
+          'http://localhost:3020/api/test/image?w=1920&h=1080&label=character',
         sheetStatus: 'completed',
       }
     );
@@ -398,12 +398,7 @@ testWithUser.describe.skip('Empty States', () => {
         page.getByRole('grid', { name: 'Style selection' })
       ).toBeVisible({ timeout: 15000 });
 
-      // Open talent dialog - find button in main content area
-      const talentButton = page
-        .locator('main')
-        .getByRole('button', { name: 'Talent' });
-      await expect(talentButton).toBeVisible();
-      await talentButton.click();
+      await openComposerReference(page, 'Talent');
 
       // Wait for dialog to open
       const dialog = page.getByRole('dialog');

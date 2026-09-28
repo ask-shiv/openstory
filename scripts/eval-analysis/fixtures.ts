@@ -8,14 +8,14 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { replayRecordedE2eScenes } from '@/lib/ai/recorded-e2e-scenes';
+import { replayRecordedE2eScenes } from '@/sequences/server/recorded-e2e-scenes';
 import type {
   CharacterBibleEntry,
   LocationBibleEntry,
   Scene,
-} from '@/lib/ai/scene-analysis.schema';
-import { DEFAULT_STYLE_TEMPLATES } from '@/lib/style/style-templates';
-import type { StyleConfig } from '@/lib/style/style-config';
+} from '@/shots/scene-analysis.schema';
+import { DEFAULT_STYLE_TEMPLATES } from '@/look/style-templates';
+import type { StyleConfig } from '@/look/style-config';
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -68,6 +68,11 @@ export const TALENT_CASE = {
       standardClothing: 'Fitted black turtleneck, dark jeans, scuffed boots.',
       distinguishingFeatures:
         'Signature glossy coral lipstick, gold hoop earrings.',
+      personality: 'Sharp, self-possessed, performs ease for the camera.',
+      movement: 'Quick precise hands, chin up, never hurries her feet.',
+      voiceDescription: '',
+      voiceOnly: false,
+      isPerson: true,
       consistencyTag: 'scarlett_vega',
     },
     {
@@ -81,6 +86,11 @@ export const TALENT_CASE = {
       standardClothing: 'Navy chore coat over a faded tee, work jeans.',
       distinguishingFeatures:
         'Scar through the left eyebrow, scuffed silver watch.',
+      personality: 'Guarded, dry, slow to trust.',
+      movement: 'Heavy deliberate stride, favours the left knee.',
+      voiceDescription: '',
+      voiceOnly: false,
+      isPerson: true,
       consistencyTag: 'jack_cole',
     },
   ] satisfies CharacterBibleEntry[],

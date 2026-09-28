@@ -17,31 +17,31 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { getChatPrompt } from '@/lib/prompts';
+import { getChatPrompt } from '@/platform/server/ai/prompts-index';
 import {
   locationMatchResponseSchema,
   musicDesignResultSchema,
   sceneSplitBiblesResultSchema,
   sceneSplitScenesResultSchema,
   talentMatchResponseSchema,
-} from '@/lib/ai/response-schemas';
+} from '@/sequences/response-schemas';
 import {
   motionPromptSchema,
   visualPromptResultSchema,
-} from '@/lib/ai/scene-analysis.schema';
+} from '@/shots/scene-analysis.schema';
 import {
   SCRIPT_ANALYSIS_MODELS,
   getAnalysisModelById,
   isSelectableAnalysisModelId,
-} from '@/lib/ai/models.config';
-import { addLineGutter } from '@/lib/ai/boundary-split';
-import { narrowShotPromptContext } from '@/lib/ai/prompt-context';
-import { buildMatchingPromptVariables } from '@/lib/ai/talent-matching-prompt';
-import { buildLocationMatchingPromptVariables } from '@/lib/ai/location-matching-prompt';
-import { buildMusicSceneSummaries } from '@/lib/workflows/music-scene-summaries';
-import { STYLE_CATEGORIES } from '@/lib/style/auto-style';
-import { STYLE_PACE_VALUES } from '@/lib/style/style-config';
-import type { LibraryLocation } from '@/lib/db/schema/location-library';
+} from '@/models/models.config';
+import { addLineGutter } from '@/sequences/boundary-split';
+import { narrowShotPromptContext } from '@/shots/server/prompt-context';
+import { buildMatchingPromptVariables } from '@/cast/server/talent-matching-prompt';
+import { buildLocationMatchingPromptVariables } from '@/cast/server/location-matching-prompt';
+import { musicSceneSummariesFromAnalysis } from '@/audio/server/workflows/music-scene-summaries';
+import { STYLE_CATEGORIES } from '@/look/auto-style';
+import { STYLE_PACE_VALUES } from '@/look/style-config';
+import type { LibraryLocation } from '@/platform/server/db/schema/location-library';
 import {
   LOCATION_CASE,
   PROSE_GOLD_BEATS,
@@ -86,7 +86,7 @@ type CallId = (typeof CALLS)[number];
 
 const SPEED_SWEEP_MODELS = [
   'anthropic/claude-opus-5-fast',
-  'google/gemini-3.7-flash',
+  'google/gemini-3.8-flash',
   'openai/gpt-5.6-luna',
   'z-ai/glm-5.3-flash',
   'bytedance-seed/seed-2.0-mini',
@@ -151,7 +151,7 @@ const CANDIDATES: Array<{
   },
 ];
 
-const JUDGE_MODEL = 'google/gemini-3.7-flash';
+const JUDGE_MODEL = 'google/gemini-3.8-flash';
 
 /** Production auto-style schema wraps `.catch()` / `preprocess`, which Anthropic
  *  rejects as an invalid enum in strict structured output. The inner object is
@@ -678,7 +678,7 @@ async function runCall(
   }
 
   if (job.call === 'music') {
-    const summaries = buildMusicSceneSummaries(gold.scenes);
+    const summaries = musicSceneSummariesFromAnalysis(gold.scenes);
     const { messages } = await getChatPrompt('phase/music-design-chat', {
       scenes: JSON.stringify(summaries, null, 2),
       sceneCount: String(summaries.length),
@@ -763,7 +763,7 @@ async function main() {
   if (quick && !modelFilter) {
     models = catalog.filter((m) =>
       [
-        'google/gemini-3.7-flash',
+        'google/gemini-3.8-flash',
         'z-ai/glm-5.3-flash',
         'anthropic/claude-opus-5-fast',
       ].includes(m.id)

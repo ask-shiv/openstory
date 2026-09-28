@@ -1,42 +1,48 @@
 /**
  * /api/v1/sequences/$id/exports — server-side MP4 export for the public API.
  *
- *   POST — start a server-side export. Reserves a `sequence_exports` row
- *          (status `processing`) and triggers `SequenceExportWorkflow`, which
- *          renders the stitched MP4 in the video-export Cloudflare Container
- *          and streams it to R2. Responds 202; poll the GET endpoint.
+ *   POST — start a server-side export. A ready row whose `sourceShotsHash`
+ *          matches the current cut is returned 200 (no re-render). A live
+ *          `processing` row is returned 202 (reuse, one in-flight per
+ *          sequence). Otherwise reserves a row and triggers
+ *          `SequenceExportWorkflow`, which renders the stitched MP4 in the
+ *          video-export Cloudflare Container and streams it to R2. Poll GET.
  *   GET  — list this sequence's exports (any status) so an agent can poll for
- *          the `ready` URL.
+ *          the `ready` URL. `?wait=60s` long-polls until nothing is
+ *          `processing`.
  *
  * Team-scoped via `authWithTeamRequestMiddleware`; a key only sees its own
- * team's sequences. Both producers write the same `sequence_exports` table
- * and the same `sourceShotsHash` (via `hashSequenceExportInputs`) so a
- * server-rendered MP4 is reused by the theatre cache (#1406).
+ * team's sequences. Theatre Download/Copy POST this same route; a ready MP4
+ * whose `sourceShotsHash` matches is reused (#1406).
  */
 
-import { authWithTeamRequestMiddleware } from '@/functions/middleware';
-import { runApiV1Handler } from '@/lib/api-v1/errors';
+import { authWithTeamRequestMiddleware } from '@/platform/middleware.fn';
+import { runApiV1Handler } from '@/platform/server/api-v1/errors';
+import { decideExistingExport } from '@/platform/server/api-v1/export-reuse';
 import {
   API_V1_BASE,
   getLink,
   waitLink,
   withLinks,
   type HalLinks,
-} from '@/lib/api-v1/hal';
-import type { SequenceExport } from '@/lib/db/schema';
-import { generateId } from '@/lib/db/id';
-import { NotFoundError, ValidationError } from '@/lib/errors';
+} from '@/platform/server/api-v1/hal';
+import { getWaitMs, longPoll } from '@/platform/server/api-v1/wait';
+import type { SequenceExportDocument } from '@/platform/server/api-v1/state';
+import type { SequenceExport } from '@/platform/server/db/schema';
+import { generateId } from '@/platform/id';
+import { NotFoundError, ValidationError } from '@/platform/errors';
 import {
   STORAGE_BUCKETS,
   getPublicUrl,
   toShareableUrl,
-} from '@/lib/storage/buckets';
+} from '@/platform/server/storage/buckets';
 import {
   effectiveExportMusicUrl,
   hashSequenceExportInputs,
-} from '@/lib/sequence-player/source-shots-hash';
-import { triggerWorkflow } from '@/lib/workflow/client';
-import type { SequenceExportWorkflowInput } from '@/lib/workflow/types';
+} from '@/sequences/ui/theatre/source-shots-hash';
+import { collapseConsecutiveUrls } from '@/sequences/ui/theatre/playback-scenes';
+import { triggerWorkflow } from '@/platform/server/workflow/client';
+import type { SequenceExportWorkflowInput } from '@/platform/server/workflow/types';
 import { createFileRoute } from '@tanstack/react-router';
 
 const EXPORT_FILENAME_SUFFIX = '_openstory.mp4';
@@ -53,7 +59,10 @@ function buildExportPath(teamId: string, sequenceId: string): string {
   return `teams/${teamId}/sequences/${sequenceId}/exports/${generateId().slice(-8)}${EXPORT_FILENAME_SUFFIX}`;
 }
 
-function formatExport(row: SequenceExport, origin: string) {
+function formatExport(
+  row: SequenceExport,
+  origin: string
+): SequenceExportDocument {
   return {
     id: row.id,
     status: row.status,
@@ -86,21 +95,40 @@ export const Route = createFileRoute('/api/v1/sequences/$id/exports')({
     handlers: {
       GET: async ({ params, context, request }) =>
         runApiV1Handler(async () => {
-          const sequence = await context.scopedDb.sequences.getById(params.id);
-          if (!sequence) throw new NotFoundError('Sequence not found');
-
+          const waitMs = getWaitMs(request);
           const origin = new URL(request.url).origin;
-          const exports =
-            await context.scopedDb.sequenceExports.listAllBySequence(params.id);
-          return Response.json(
-            withLinks(
-              {
+
+          const { value, changed, done } = await longPoll({
+            waitMs,
+            signal: request.signal,
+            load: async () => {
+              const sequence = await context.scopedDb.sequences.getById(
+                params.id
+              );
+              if (!sequence) throw new NotFoundError('Sequence not found');
+              const exports =
+                await context.scopedDb.sequenceExports.listAllBySequence(
+                  params.id
+                );
+              return {
                 sequenceId: params.id,
                 exports: exports.map((e) => formatExport(e, origin)),
-              },
-              exportsLinks(params.id)
-            )
-          );
+              };
+            },
+            cursor: (v) =>
+              v.exports.map((e) => `${e.id}:${e.status}`).join(','),
+            done: (v) => v.exports.every((e) => e.status !== 'processing'),
+          });
+
+          return Response.json(withLinks(value, exportsLinks(params.id)), {
+            headers:
+              waitMs > 0
+                ? {
+                    'X-Wait-Changed': String(changed),
+                    'X-Wait-Done': String(done),
+                  }
+                : undefined,
+          });
         }),
 
       POST: async ({ params, context, request }) =>
@@ -128,52 +156,22 @@ export const Route = createFileRoute('/api/v1/sequences/$id/exports')({
             await context.scopedDb.videoVariants.getSelectedByShotIds(
               shots.map((s) => s.id)
             );
-          const scenes = shots
-            .flatMap((s) => {
-              const url = selectedVideoByShot.get(s.id)?.url;
-              return url ? [url] : [];
-            })
-            .map((videoUrl, orderIndex) => ({ orderIndex, videoUrl }));
-          if (scenes.length === 0) {
-            throw new ValidationError('No scene videos are ready yet');
-          }
-          if (scenes.length !== shots.length) {
+          const shotUrls = shots.map(
+            (s) => selectedVideoByShot.get(s.id)?.url ?? null
+          );
+          if (shotUrls.some((url) => !url)) {
+            const missing = shotUrls.filter((url) => !url).length;
             throw new ValidationError(
-              `${shots.length - scenes.length} of ${shots.length} scenes are still generating`
+              missing === shots.length
+                ? 'No scene videos are ready yet'
+                : `${missing} of ${shots.length} scenes are still generating`
             );
           }
+          // Packed in-clip renders share one URL across covered shots (#1510).
+          const scenes = collapseConsecutiveUrls(
+            shotUrls.filter((url): url is string => Boolean(url))
+          ).map((videoUrl, orderIndex) => ({ orderIndex, videoUrl }));
 
-          // Coalesce: reuse the in-flight export instead of spawning a
-          // duplicate render. A stale row means the worker crashed before
-          // `onFailure` ran — mark it failed so it stops blocking new exports
-          // (and frees the one-processing-row unique slot).
-          const existing =
-            await context.scopedDb.sequenceExports.listAllBySequence(params.id);
-          const inFlight = existing.find((e) => e.status === 'processing');
-          if (inFlight) {
-            if (
-              Date.now() - inFlight.createdAt.getTime() <
-              STALE_PROCESSING_MS
-            ) {
-              return Response.json(
-                withLinks(
-                  { export: formatExport(inFlight, origin) },
-                  exportsLinks(params.id)
-                ),
-                { status: 202 }
-              );
-            }
-            await context.scopedDb.sequenceExports.markFailed(
-              inFlight.id,
-              'Export timed out — no result from the render worker'
-            );
-          }
-
-          // Reserve the row BEFORE triggering so a crash between the two
-          // leaves a row the stale sweep above can reconcile. `created: false`
-          // means a concurrent POST won the one-processing-row race — coalesce
-          // onto its row rather than starting a second workflow.
-          //
           // Hash is computed here, not accepted from the client — a wrong
           // client cache key would mark a stale MP4 as current (#1253 / #1406).
           const musicUrl = effectiveExportMusicUrl(
@@ -184,6 +182,47 @@ export const Route = createFileRoute('/api/v1/sequences/$id/exports')({
             sceneUrls: scenes.map((s) => s.videoUrl),
             musicUrl,
           });
+
+          // Content-addressed reuse (#1402): a ready MP4 of this exact cut is
+          // served as-is. Otherwise coalesce onto a live processing row, or
+          // fail a stale one so it stops blocking new exports.
+          const existing =
+            await context.scopedDb.sequenceExports.listAllBySequence(params.id);
+          const decision = decideExistingExport(
+            existing,
+            sourceShotsHash,
+            Date.now(),
+            STALE_PROCESSING_MS
+          );
+          if (decision.action === 'return-ready') {
+            return Response.json(
+              withLinks(
+                { export: formatExport(decision.row, origin) },
+                exportsLinks(params.id)
+              ),
+              { status: 200 }
+            );
+          }
+          if (decision.action === 'return-processing') {
+            return Response.json(
+              withLinks(
+                { export: formatExport(decision.row, origin) },
+                exportsLinks(params.id)
+              ),
+              { status: 202 }
+            );
+          }
+          if (decision.action === 'fail-stale-processing') {
+            await context.scopedDb.sequenceExports.markFailed(
+              decision.row.id,
+              'Export timed out — no result from the render worker'
+            );
+          }
+
+          // Reserve the row BEFORE triggering so a crash between the two
+          // leaves a row the stale sweep above can reconcile. `created: false`
+          // means a concurrent POST won the one-processing-row race — coalesce
+          // onto its row rather than starting a second workflow.
           const path = buildExportPath(context.teamId, params.id);
           const { row, created } =
             await context.scopedDb.sequenceExports.createProcessing({

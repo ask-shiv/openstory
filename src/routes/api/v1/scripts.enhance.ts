@@ -14,14 +14,14 @@
  * envelope; failures after streaming has begun arrive as an `event: error` shot.
  */
 
-import { authWithTeamRequestMiddleware } from '@/functions/middleware';
+import { authWithTeamRequestMiddleware } from '@/platform/middleware.fn';
 import {
   buildEnhanceGenerator,
   enhanceSseResponse,
-} from '@/lib/api-v1/enhance';
-import { apiEnhanceScriptSchema } from '@/lib/api-v1/enhance-input-schema';
-import { DEFAULT_VIDEO_MODEL, isValidImageToVideoModel } from '@/lib/ai/models';
-import { apiJsonError, runApiV1Handler } from '@/lib/api-v1/errors';
+} from '@/platform/server/api-v1/enhance';
+import { apiEnhanceScriptSchema } from '@/platform/server/api-v1/enhance-input-schema';
+import { DEFAULT_VIDEO_MODEL, isValidImageToVideoModel } from '@/models/models';
+import { apiJsonError, runApiV1Handler } from '@/platform/server/api-v1/errors';
 import { createFileRoute } from '@tanstack/react-router';
 
 export const Route = createFileRoute('/api/v1/scripts/enhance')({
@@ -53,7 +53,6 @@ export const Route = createFileRoute('/api/v1/scripts/enhance')({
           // status before any SSE headers are committed.
           const first = await gen.next();
           return enhanceSseResponse(first, gen, {
-            targetSeconds: input.targetSeconds ?? 30,
             videoModel:
               input.videoModel && isValidImageToVideoModel(input.videoModel)
                 ? input.videoModel

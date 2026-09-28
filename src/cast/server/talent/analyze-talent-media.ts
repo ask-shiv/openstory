@@ -1,0 +1,105 @@
+/**
+ * Billed talent-vision call used by server fns and library-talent create.
+ */
+
+import {
+  analyzeTalentMedia,
+  TALENT_VISION_MODEL,
+  type TalentMediaAnalysis,
+  type TalentVisionResult,
+} from '@/cast/server/talent-vision';
+import type { CharacterBibleEntry } from '@/shots/scene-analysis.schema';
+import { reportMissingBillingCost } from '@/billing/billing-observability';
+import { estimateLLMCost } from '@/billing/cost-estimation';
+import type { ScopedDb } from '@/platform/server/db/scoped';
+import { InsufficientCreditsError } from '@/platform/errors';
+
+export type AnalyzeTalentMediaForTeamInput = {
+  scopedDb: ScopedDb;
+  userId: string;
+  imageUrls: string[];
+  filenames?: string[];
+  idempotencyKey: string;
+};
+
+export async function analyzeTalentMediaForTeam(
+  input: AnalyzeTalentMediaForTeamInput
+): Promise<TalentVisionResult> {
+  const llmKeyInfo =
+    await input.scopedDb.apiKeys.resolveLlmKey(TALENT_VISION_MODEL);
+  if (llmKeyInfo.source !== 'team') {
+    const estimatedCost = estimateLLMCost(1);
+    const canAfford =
+      await input.scopedDb.billing.hasEnoughCredits(estimatedCost);
+    if (!canAfford) {
+      throw new InsufficientCreditsError(
+        'Insufficient credits for talent vision'
+      );
+    }
+  }
+
+  const result = await analyzeTalentMedia({
+    imageUrls: input.imageUrls,
+    filenames: input.filenames,
+    llmKey: llmKeyInfo,
+    // The region fallback swaps the model; re-resolve so the retry's via is
+    // one that carries it (#1259).
+    resolveLlmKey: (model) => input.scopedDb.apiKeys.resolveLlmKey(model),
+    observability: {
+      userId: input.userId,
+      tags: ['vision', 'talent'],
+    },
+  });
+
+  if (!result.usedOwnKey) {
+    if (result.costMicros > 0) {
+      await input.scopedDb.billing.deductCredits(result.costMicros, {
+        description: `Talent vision (${result.model})`,
+        metadata: { model: result.model },
+        idempotencyKey: input.idempotencyKey,
+      });
+    } else {
+      reportMissingBillingCost({
+        source: 'talent-vision',
+        modelId: result.model,
+        metadata: { imageCount: input.imageUrls.length },
+      });
+    }
+  }
+
+  return result;
+}
+
+function slugifyName(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_|_$/g, '');
+  return slug.length > 0 ? slug : 'talent';
+}
+
+export function sheetMetadataFromAnalysis(
+  name: string,
+  analysis: TalentMediaAnalysis
+): CharacterBibleEntry {
+  const slug = slugifyName(name);
+  return {
+    characterId: slug,
+    name,
+    age: analysis.age,
+    gender: analysis.gender,
+    ethnicity: analysis.ethnicity,
+    physicalDescription:
+      analysis.physicalDescription.trim() || analysis.description,
+    standardClothing: analysis.standardClothing,
+    distinguishingFeatures: analysis.distinguishingFeatures,
+    // A photo carries no performance; cast reads the talent row's (Edit talent).
+    personality: '',
+    movement: '',
+    voiceDescription: '',
+    // A talent photo is a face by definition.
+    voiceOnly: false,
+    isPerson: true,
+    consistencyTag: slug,
+  };
+}

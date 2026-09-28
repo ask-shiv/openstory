@@ -93,7 +93,11 @@ function writeEnvFile(vars: Map<string, string>) {
     },
     {
       header: 'Billing (Stripe)',
-      keys: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'],
+      keys: [
+        'STRIPE_SECRET_KEY',
+        'STRIPE_PUBLISHABLE_KEY',
+        'STRIPE_WEBHOOK_SECRET',
+      ],
     },
     {
       header: 'Security',
@@ -326,7 +330,7 @@ async function prPreviewSetup() {
           process.exit(0);
         }
 
-        if (value.trim()) {
+        if (typeof value === 'string' && value.trim()) {
           merged.set(key, value.trim());
         }
       }
@@ -423,7 +427,10 @@ async function prPreviewSetup() {
           process.exit(0);
         }
 
-        zoneId = manualZoneId.trim() || undefined;
+        zoneId =
+          typeof manualZoneId === 'string'
+            ? manualZoneId.trim() || undefined
+            : undefined;
       }
 
       if (zoneId) {
@@ -499,7 +506,7 @@ async function prPreviewSetup() {
           'Workers subdomain (the part before .workers.dev in your preview URL)',
         placeholder: 'e.g. myaccount',
       });
-      if (!p.isCancel(manual) && manual.trim()) {
+      if (typeof manual === 'string' && manual.trim()) {
         workersSubdomain = manual.trim();
       }
     }
@@ -1039,7 +1046,9 @@ export async function runProdSetup(mode: ProdSetupMode) {
   });
 
   function checkCancel<T>(value: T | symbol): T {
-    if (p.isCancel(value)) {
+    // isCancel is `value is typeof CANCEL_SYMBOL` (a unique symbol), which
+    // does not exclude the rest of `symbol` from `T | symbol`.
+    if (p.isCancel(value) || typeof value === 'symbol') {
       saveProgress();
       p.cancel(`Setup cancelled. Progress saved to ${ENV_FILENAME}`);
       process.exit(0);
@@ -1284,7 +1293,7 @@ export async function runProdSetup(mode: ProdSetupMode) {
   if (!vars.has('VITE_APP_NAME')) vars.set('VITE_APP_NAME', 'OpenStory');
 
   // Contact/privacy emails are derived from VITE_APP_URL at runtime
-  // (src/lib/marketing/constants.ts) — no env vars needed.
+  // (src/ui/marketing/constants.ts) — no env vars needed.
 
   if (!vars.has('BETTER_AUTH_SECRET')) {
     vars.set('BETTER_AUTH_SECRET', generateSecret());
@@ -1589,7 +1598,11 @@ export async function runProdSetup(mode: ProdSetupMode) {
   // -------------------------------------------------------------------------
   // Billing (Stripe)
   // -------------------------------------------------------------------------
-  const stripeKeys = ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'] as const;
+  const stripeKeys = [
+    'STRIPE_SECRET_KEY',
+    'STRIPE_PUBLISHABLE_KEY',
+    'STRIPE_WEBHOOK_SECRET',
+  ] as const;
   const hasStripe = stripeKeys.some((k) => vars.has(k));
 
   if (hasStripe) {
@@ -1614,6 +1627,11 @@ export async function runProdSetup(mode: ProdSetupMode) {
       'Get one at: https://dashboard.stripe.com/apikeys'
     );
     await promptForKey(
+      'STRIPE_PUBLISHABLE_KEY',
+      'Stripe Publishable Key (pk_live_...)',
+      'Same page as the secret key — used for in-app card entry'
+    );
+    await promptForKey(
       'STRIPE_WEBHOOK_SECRET',
       'Stripe Webhook Secret (whsec_...)',
       'From your webhook endpoint in the Stripe dashboard'
@@ -1633,7 +1651,8 @@ export async function runProdSetup(mode: ProdSetupMode) {
         '',
         'If using a restricted key, required permissions:',
         '  Charges (Read), Customers (Write),',
-        '  Payment Intents (Read), Checkout Sessions (Write)',
+        '  Payment Intents (Read), Setup Intents (Write),',
+        '  Checkout Sessions (Write)',
       ].join('\n'),
       'Production Webhook Setup'
     );

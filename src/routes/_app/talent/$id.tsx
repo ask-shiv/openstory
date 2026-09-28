@@ -1,27 +1,25 @@
 import { useState } from 'react';
-import { useAuthGate } from '@/components/auth/auth-gate-provider';
-import { routeParams } from '@/components/layout/breadcrumbs';
-import { EditTalentDialog } from '@/components/talent-library/edit-talent-dialog';
-import { PortraitAttestationFields } from '@/components/talent-library/portrait-attestation-fields';
-import { TalentMediaUpload } from '@/components/talent-library/talent-media-upload';
-import { statementFor } from '@/lib/compliance/attestations';
-import { PageContainer } from '@/components/layout/page-container';
-import { getCurrentUserProfileFn } from '@/functions/user';
-import { PageDescription } from '@/components/typography/page-description';
-import { PageHeader } from '@/components/typography/page-header';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
-import { useTalentSheetRealtime } from '@/hooks/use-talent-realtime';
+import { useAuthGate } from '@/platform/ui/auth/auth-gate-provider';
+import { routeParams } from '@/ui/layout/breadcrumbs';
+import { EditTalentDialog } from '@/cast/ui/talent-library/edit-talent-dialog';
+import { TalentMediaUpload } from '@/cast/ui/talent-library/talent-media-upload';
+import { PageContainer } from '@/ui/layout/page-container';
+import { getCurrentUserProfileFn } from '@/platform/user.fn';
+import { PageDescription } from '@/ui/typography/page-description';
+import { PageHeader } from '@/ui/typography/page-header';
+import { Button } from '@/ui/shadcn/button';
+import { Card } from '@/ui/shadcn/card';
+import { Skeleton } from '@/ui/shadcn/skeleton';
+import { useTalentSheetRealtime } from '@/cast/ui/use-talent-realtime';
 import {
   useTalentById,
   useDeleteTalent,
   useGenerateTalentSheet,
   useSetDefaultSheet,
   useToggleTalentFavorite,
-} from '@/hooks/use-talent';
-import { sheetProgressCopy } from '@/lib/talent/sheet-progress-copy';
-import { cn } from '@/lib/utils';
+} from '@/cast/ui/use-talent';
+import { sheetProgressCopy } from '@/cast/sheet-progress-copy';
+import { cn } from '@/ui/utils';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import {
@@ -70,8 +68,6 @@ function TalentDetailPage() {
   const generateSheet = useGenerateTalentSheet();
   const setDefaultSheet = useSetDefaultSheet();
   const [dropFiles, setDropFiles] = useState<File[]>([]);
-  const [attested, setAttested] = useState(false);
-  const [authorizationBasis, setAuthorizationBasis] = useState('');
 
   const canManageTalent = Boolean(
     isAuthenticated &&
@@ -150,14 +146,6 @@ function TalentDetailPage() {
       </div>
     );
   }
-
-  const uploadStatement = statementFor({
-    subjectType: 'talent',
-    depictsRealPerson: talent.isHuman === true,
-  });
-  const canUpload =
-    attested &&
-    (!uploadStatement.requiresBasis || authorizationBasis.trim().length > 0);
 
   return (
     <div className="h-full overflow-auto">
@@ -324,15 +312,15 @@ function TalentDetailPage() {
                     sheet.isDefault && 'ring-2 ring-primary'
                   )}
                 >
-                  <div className="aspect-video bg-muted relative">
+                  <div className="relative bg-muted">
                     {sheet.imageUrl ? (
                       <img
                         src={sheet.imageUrl}
                         alt={sheet.name}
-                        className="w-full h-full object-cover"
+                        className="h-auto w-full"
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center">
+                      <div className="flex aspect-video w-full items-center justify-center">
                         <User className="h-12 w-12 text-muted-foreground/30" />
                       </div>
                     )}
@@ -394,42 +382,14 @@ function TalentDetailPage() {
             <h2 className="text-lg font-semibold">Drop a sheet or photos</h2>
             <p className="text-sm text-muted-foreground">
               Drop a character sheet to use it as-is, or drop photos to generate
-              a sheet.
+              a sheet. A photo of a real person asks for your rights sign-off
+              first.
             </p>
-            {dropFiles.length > 0 ? (
-              <PortraitAttestationFields
-                statement={uploadStatement}
-                attested={attested}
-                onAttestedChange={setAttested}
-                authorizationBasis={authorizationBasis}
-                onAuthorizationBasisChange={setAuthorizationBasis}
-              />
-            ) : null}
             <TalentMediaUpload
               files={dropFiles}
-              onFilesChange={(next) => {
-                setDropFiles(next);
-                if (next.length === 0) {
-                  setAttested(false);
-                  setAuthorizationBasis('');
-                }
-              }}
+              onFilesChange={setDropFiles}
               talentId={talent.id}
-              portraitAttestation={
-                canUpload
-                  ? {
-                      statementVersion: uploadStatement.version,
-                      authorizationBasis: uploadStatement.requiresBasis
-                        ? authorizationBasis.trim()
-                        : undefined,
-                    }
-                  : undefined
-              }
-              onComplete={() => {
-                setDropFiles([]);
-                setAttested(false);
-                setAuthorizationBasis('');
-              }}
+              onComplete={() => setDropFiles([])}
             />
           </section>
         ) : null}

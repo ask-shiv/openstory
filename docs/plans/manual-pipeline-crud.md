@@ -94,7 +94,7 @@ Team
 ### Staleness model (do not reinvent)
 
 - **No stored `stale` flag.** Derived: `stored inputHash` vs `recompute(now)`.
-- Helpers: `src/lib/ai/input-hash.ts`, `src/lib/shots/shot-staleness.ts`
+- Helpers: `src/shots/input-hash.ts`, `src/shots/server/shot-staleness.ts`
 - Cascade plan: `update-stale-plan.ts` / `update-stale-depth.ts` → `UpdateStaleShotsWorkflow`
 - Docs: `docs/architecture/prompt-staleness-dependency-graph.md`, `workflow-snapshots-and-content-hash-staleness.md`
 
@@ -187,23 +187,36 @@ Legend: **DB** = scoped layer · **SF** = server fn · **UI** = product UI
 
 ### 4.2 Edge table (authoritative product rules)
 
-| If user changes…                                      | Goes stale / invalidated                                                                              | Stays fresh                                                        |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| Scene script extract                                  | Visual + motion **prompts** (scene surface in hash)                                                   | Character/location/element **sheets** (no script→bible edge today) |
-| Scene location / timeOfDay / storyBeat                | Prompts (in scene input surface)                                                                      | Title (display label); sheets                                      |
-| Character bible fields (name, physicalDescription, …) | Visual + motion prompts (projected fields); character sheet                                           | Unrelated characters' artifacts                                    |
-| Character sheet image (regen/upload)                  | Still images using that sheet hash                                                                    | Prompts (unless bible text also changed)                           |
-| Location bible / sheet                                | Same pattern as character                                                                             | —                                                                  |
-| Element image replace                                 | Stills (ref hash); replace-element may edit stills                                                    | Prompts unless description changes                                 |
-| Visual prompt only (user-edit)                        | **Image** (prompt TEXT in image hash)                                                                 | Video until image changes (then video)                             |
-| Still only (regen or upload + select)                 | **Video** (hard clear to `pending` on promote — keep this); motion prompt (via startingFrameImageUrl) | Visual prompt                                                      |
-| Motion prompt only                                    | **Video**                                                                                             | Still, visual prompt                                               |
-| Duration only                                         | Video / segment                                                                                       | Prompts, stills                                                    |
-| Style / aspect / analysis model                       | Prompts + sheets as per hash inputs                                                                   | —                                                                  |
-| Image / video / music model                           | Artifacts of that modality                                                                            | Other modalities                                                   |
-| Music prompt                                          | Music track                                                                                           | Shots                                                              |
-| Soft-delete shot                                      | Exclude from lists/plan/export/theatre; keep frames/variants/hashes                                   | Other live shots                                                   |
-| Soft-delete scene                                     | Soft-delete its shots too; re-tile segments over live only                                            | Unrelated sequences; rows retained for restore                     |
+Every row is asserted as a verdict in `src/shots/server/staleness-matrix.test.ts`.
+
+| If user changes…                                       | Goes stale                                                           | Stays fresh                                                        |
+| ------------------------------------------------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Scene script extract                                   | Visual + motion **prompts** (scene surface in hash)                  | Character/location/element **sheets** (no script→bible edge today) |
+| Scene location / timeOfDay / storyBeat                 | Prompts (in scene input surface); music prompt                       | Title (display label); sheets                                      |
+| Scene continuity tags                                  | Prompts (the tags pick which bible entries they hash)                | Stills (they attach the sheets their prompt names)                 |
+| Character look (physicalDescription, clothing, …)      | Visual + motion prompts; character sheet                             | Unrelated characters' artifacts                                    |
+| Character personality / movement                       | Motion prompt                                                        | Visual prompt, sheet                                               |
+| Character or location name; location consistency tag   | Nothing (labels)                                                     | Everything                                                         |
+| Character consistency tag                              | That character's sheet                                               | Prompts, stills, clips                                             |
+| Character or location sheet re-selected (regen/upload) | Stills using it (selected version id); clips that were sent it       | Prompts                                                            |
+| Cast talent's sheet or description                     | Character sheet                                                      | Prompts                                                            |
+| Location bible fields                                  | Prompts; location sheet                                              | —                                                                  |
+| Library location reference regenerated                 | Location sheet                                                       | Prompts                                                            |
+| Element description                                    | Prompts                                                              | Stills, clips                                                      |
+| Element image replace                                  | Stills naming it; clips that were sent it                            | Prompts                                                            |
+| Visual prompt only (user-edit)                         | **Still** (prompt TEXT in still hash)                                | Clip until a new still is selected                                 |
+| Still only (regen or upload + select)                  | **Clip** (manifest names the old still); motion prompt (still URL)   | Visual prompt                                                      |
+| Motion prompt only                                     | **Clip**                                                             | Still, visual prompt                                               |
+| Shot lines                                             | Motion prompt; clip                                                  | Visual prompt, still                                               |
+| Shot reference-only override                           | Motion prompt; clip                                                  | Still                                                              |
+| Duration only                                          | Clip; music prompt and track                                         | Shot prompts, stills                                               |
+| Style                                                  | Prompts; sheets                                                      | Stills until prompts regenerate                                    |
+| Aspect ratio                                           | Prompts; stills                                                      | Sheets                                                             |
+| Image / video / music / analysis model switch          | Nothing: verify pins each artifact to the model that made it (#1785) | Everything; the switch applies to the next generation              |
+| Music prompt                                           | Music track                                                          | Shots                                                              |
+| Music tags                                             | Music track                                                          | Music prompt, shots                                                |
+| Soft-delete shot                                       | Exclude from lists/plan/export/theatre; keep frames/variants/hashes  | Other live shots                                                   |
+| Soft-delete scene                                      | Soft-delete its shots too; re-tile segments over live only           | Unrelated sequences; rows retained for restore                     |
 
 ### 4.3 Prompt + image simultaneous replace (user's question)
 
@@ -370,7 +383,7 @@ You are implementing Manual Pipeline Driveability for OpenStory.
 Contract (do not violate):
 1. Server functions in src/functions/ are the product API. Extend scoped DB in
    src/lib/db/scoped/ when needed. Do NOT build public API/MCP.
-2. Staleness is derived via input hashes (src/lib/ai/input-hash.ts) — never a
+2. Staleness is derived via input hashes (src/shots/input-hash.ts) — never a
    stored stale flag. Only downstream artifacts may become stale.
 3. Versions are append-only; selection is a pointer; soft discard only.
 4. Product "delete" is SOFT (deletedAt / discardedAt / archived). Always ship a
@@ -385,7 +398,7 @@ Contract (do not violate):
 9. Never auto-mutate upstream artifacts.
 10. Emit sequence_events for structure and media mutations (include prevState
     for undo).
-11. Follow CLAUDE.md: ULID ids, no hand-written migrations, TanStack Query
+11. Follow AGENTS.md: ULID ids, no hand-written migrations, TanStack Query
    suspense, shadcn + layout-only Tailwind, bun run test / typecheck / lint.
 
 Before coding a phase:

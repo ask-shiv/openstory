@@ -55,7 +55,7 @@ export async function createTestUser(
 
   // Create via the guarded test API so all writes go through the single
   // safe Miniflare process (instead of direct getPlatformProxy from this worker).
-  const res = await fetch('http://localhost:3001/api/test/user', {
+  const res = await fetch('http://localhost:3020/api/test/user', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -74,7 +74,7 @@ export async function createTestUser(
  */
 async function cleanupTestUser(userId: string, teamId: string): Promise<void> {
   // Cleanup via test API so the write happens inside the safe Worker Miniflare
-  await fetch('http://localhost:3001/api/test/user', {
+  await fetch('http://localhost:3020/api/test/user', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userId, teamId }),
@@ -94,23 +94,13 @@ export async function authenticateUser(
 ): Promise<void> {
   const testOtp = '123456';
 
-  // Welcome-credits dialog (#1096) re-shows every 3h until the team has a
-  // credit_usage row. Fresh e2e users have none — pre-seed a recent dismiss
-  // so the modal never overlays the UI under test. storageState carries it
-  // into specs that reuse the shared session.
-  await page.addInitScript(() => {
-    localStorage.setItem(
-      'openstory:welcome-credits-dismissed-at',
-      String(Date.now())
-    );
-  });
   // Replay fal fixtures were recorded on Quality + Grok Imagine 2.0 /
-  // Seedance 2.0. Turbo (Lite / H3 Max) is the product default.
+  // MiniMax H3 Max. Turbo (Lite) is the product default.
   await pinRecordedPipelineSettings(page);
 
   // Create OTP via test API (the route normalizes to the identifier
   // Better Auth's signIn.emailOtp will actually look up).
-  await fetch('http://localhost:3001/api/test/verify', {
+  await fetch('http://localhost:3020/api/test/verify', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, otp: testOtp }),

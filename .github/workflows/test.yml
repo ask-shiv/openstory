@@ -57,12 +57,12 @@ jobs:
         #    If schema and snapshot agree, `db:generate` is a no-op and the tree
         #    stays clean. Anything appearing here means either a stale snapshot
         #    or a schema edit committed without its migration (the column-default
-        #    rebuild trap in CLAUDE.md).
+        #    rebuild trap in AGENTS.md).
         run: |
           bun db:check
           bun db:generate
           if [ -n "$(git status --porcelain drizzle/migrations)" ]; then
-            echo "::error::Schema and migrations are out of sync. Run 'bun db:generate' locally and commit the result (see CLAUDE.md § schema-drift trap)."
+            echo "::error::Schema and migrations are out of sync. Run 'bun db:generate' locally and commit the result (see AGENTS.md § schema-drift trap)."
             git status --porcelain drizzle/migrations
             exit 1
           fi
@@ -160,13 +160,17 @@ jobs:
         run: |
           # No R2 creds or R2_PUBLIC_STORAGE_DOMAIN: e2e R2 is the local
           # Miniflare binding, with reads served by the worker's /r2/$ route.
-          # No XAI_API_KEY either — that would route Grok natively (#1167),
-          # past aimock, and no xAI fixtures are recorded. Keep it unset.
+          # XAI_API_KEY routes Grok natively (#1167) to the second aimock
+          # instance on :4011, where the xai/ fixtures were recorded.
           cat > dist/server/.dev.vars <<EOF
           BETTER_AUTH_SECRET=$E2E_BETTER_AUTH_SECRET
           BETTER_AUTH_URL=http://localhost:3001
           OPENROUTER_KEY=test-mock-key
           OPENROUTER_BASE_URL=http://localhost:4010
+          XAI_API_KEY=test-mock-key
+          XAI_BASE_URL=http://localhost:4011/v1
+          ELEVENLABS_API_KEY=test-mock-key
+          ELEVENLABS_BASE_URL=http://localhost:4010
           FAL_KEY=test-mock-key
           GOOGLE_CLIENT_ID=$E2E_GOOGLE_CLIENT_ID
           GOOGLE_CLIENT_SECRET=$E2E_GOOGLE_CLIENT_SECRET
@@ -253,13 +257,17 @@ jobs:
         run: |
           # No R2 creds or R2_PUBLIC_STORAGE_DOMAIN: e2e R2 is the local
           # Miniflare binding, with reads served by the worker's /r2/$ route.
-          # No XAI_API_KEY either — that would route Grok natively (#1167),
-          # past aimock, and no xAI fixtures are recorded. Keep it unset.
+          # XAI_API_KEY routes Grok natively (#1167) to the second aimock
+          # instance on :4011, where the xai/ fixtures were recorded.
           cat > dist/server/.dev.vars <<EOF
           BETTER_AUTH_SECRET=$E2E_BETTER_AUTH_SECRET
           BETTER_AUTH_URL=http://localhost:3001
           OPENROUTER_KEY=test-mock-key
           OPENROUTER_BASE_URL=http://localhost:4010
+          XAI_API_KEY=test-mock-key
+          XAI_BASE_URL=http://localhost:4011/v1
+          ELEVENLABS_API_KEY=test-mock-key
+          ELEVENLABS_BASE_URL=http://localhost:4010
           FAL_KEY=test-mock-key
           FAL_PROXY_URL=http://localhost:4010/fal
           GOOGLE_CLIENT_ID=$E2E_GOOGLE_CLIENT_ID

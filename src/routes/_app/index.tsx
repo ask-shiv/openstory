@@ -1,5 +1,5 @@
-import { NewSequencePage } from '@/components/script/new-sequence-page';
-import { publicStylesQueryOptions } from '@/lib/style/public-styles-query';
+import { NewSequencePage } from '@/sequences/ui/script/new-sequence-page';
+import { publicStylesQueryOptions } from '@/look/ui/public-styles-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
 
@@ -28,6 +28,6 @@ export const Route = createFileRoute('/_app/')({
 });
 
 function HomePage() {
-  const search = Route.useSearch();
-  return <NewSequencePage {...search} composerPath="/" />;
+  const { style, prefill } = Route.useSearch();
+  return <NewSequencePage style={style} prefill={prefill} composerPath="/" />;
 }

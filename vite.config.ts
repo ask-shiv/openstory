@@ -1,7 +1,8 @@
 // vite.config.ts
-import { copyFileSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { parse as parseJsonc } from 'jsonc-parser';
-import { resolve } from 'node:path';
 import { cloudflare } from '@cloudflare/vite-plugin';
 import contentCollections from '@content-collections/vite';
 import { tanstackStart } from '@tanstack/react-start/plugin/vite';
@@ -10,9 +11,11 @@ import { defineConfig, type Plugin } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import { devtools } from '@tanstack/devtools-vite';
 import viteReact from '@vitejs/plugin-react';
-import { worktreeAuthCookiePrefix } from './src/lib/auth/cookie-prefix.ts';
+import { worktreeAuthCookiePrefix } from './src/platform/auth/cookie-prefix.ts';
+import { createServerFnIdGenerator } from './src/platform/server-fn-id.ts';
 
 const isDev = process.env.NODE_ENV !== 'production';
+
 // Per-worktree auth cookie name (#1288). Set on process.env so Vite's usual
 // `import.meta.env.VITE_*` replacement ships it into the worker the same way
 // as VITE_APP_URL. Production builds leave it unset.
@@ -23,6 +26,35 @@ if (isDev) {
 const authCookiePrefix = isDev
   ? process.env.VITE_AUTH_COOKIE_PREFIX
   : undefined;
+
+function localTunnel(): { tunnelName: string; zone: string } | undefined {
+  const path = join(homedir(), '.openstory/dev-tunnels.json');
+  if (!existsSync(path)) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      !('tunnelName' in parsed) ||
+      typeof parsed.tunnelName !== 'string'
+    ) {
+      return undefined;
+    }
+    const zone =
+      'zone' in parsed && typeof parsed.zone === 'string'
+        ? parsed.zone
+        : 'openstory.so';
+    return { tunnelName: parsed.tunnelName, zone };
+  } catch {
+    return undefined;
+  }
+}
+
+const enableDevTunnel =
+  isDev &&
+  process.env.E2E_TEST !== 'true' &&
+  process.env.CLOUDFLARE_ENV !== 'test';
+const namedTunnel = enableDevTunnel ? localTunnel() : undefined;
 
 /**
  * Prints which wrangler.jsonc bindings are local vs REMOTE on dev startup.
@@ -178,7 +210,7 @@ export default defineConfig({
       // No email renders <CodeBlock>; see the stub for details.
       '@react-email/code-block': resolve(
         import.meta.dirname,
-        'src/lib/emails/stubs/code-block.tsx'
+        'src/platform/server/emails/stubs/code-block.tsx'
       ),
     },
     // TipTap/ProseMirror use instanceof Node. Nested 1.25.7 copies next to
@@ -192,9 +224,15 @@ export default defineConfig({
     ],
   },
   server: {
-    port: 3000,
+    port: Number.parseInt(process.env.PORT ?? '3000', 10) || 3000,
+    strictPort: true,
     host: true, // Listen on all interfaces for QStash Docker to reach via host.docker.internal
-    allowedHosts: ['localhost', '127.0.0.1', 'host.docker.internal'],
+    allowedHosts: [
+      'localhost',
+      '127.0.0.1',
+      'host.docker.internal',
+      `.${namedTunnel?.zone ?? 'openstory.so'}`,
+    ],
     watch: {
       ignored: [
         '**/e2e/.auth/**',
@@ -218,6 +256,12 @@ export default defineConfig({
     tailwindcss(),
     cloudflare({
       viteEnvironment: { name: 'ssr' },
+      // Named tunnel only — `tunnel: true` is a Quick Tunnel that auto-starts
+      // on listen (`*.trycloudflare.com`). Omit the option entirely when there
+      // is no ~/.openstory/dev-tunnels.json so `bun dev` stays loopback-only.
+      ...(enableDevTunnel && namedTunnel
+        ? { tunnel: { name: namedTunnel.tunnelName } }
+        : {}),
       // remoteBindings is left at its default (true) so an explicit
       // per-binding `remote: true` in wrangler.jsonc still works as an
       // opt-in (e.g. temporarily repro'ing a CDN bug against real R2). By
@@ -232,6 +276,11 @@ export default defineConfig({
       srcDirectory: 'src',
       router: {
         routesDirectory: 'routes',
+      },
+      serverFns: {
+        // Seed production ids on the function name only, so moving a file
+        // doesn't 500 every tab open across the deploy (#1549).
+        generateFunctionId: createServerFnIdGenerator(),
       },
     }),
     viteReact(),

@@ -49,7 +49,7 @@ subject motion in separate sentences, one physics event, one continuous take.
 
 Two templates rather than one template with a conditional block. They disagree
 on their most load-bearing rule, and a prompt that hedges between them gets
-both half-right. `src/lib/prompts/motion-prompt-templates.test.ts` pins the
+both half-right. `src/motion/server/motion-prompt-templates.test.ts` pins the
 disagreement so a future edit cannot quietly merge them.
 
 ### What it must still NOT describe
@@ -81,7 +81,7 @@ removed in #713), the three bibles, `<DIRECTOR_STYLE>` and `<ASPECT_RATIO>` —
 it composes the opening frame from the bibles itself, which is the reason it is
 a separate template at all. Nothing else read them: no still is rendered from
 them, and the only live consumer was the music prompt's visual grounding, which
-falls back to `scene.metadata`. So it was one LLM call per scene for a cache.
+#1783 removed (the music brief reads scene rows and shot durations only). So it was one LLM call per scene for a cache.
 `visualPromptsBySceneId` comes back empty and the motion-prompt hash is
 unaffected (it never included the visual prompt).
 
@@ -150,11 +150,15 @@ player before it loses its set.
 
 `resolveMotionEndpoint(model, hasRefs, via, referenceOnly)`:
 
-- Forces the reference route even when a scene matched no sheets at all. A
-  two-hander in an unmatched location still needs an endpoint whose start frame
-  is optional.
-- Throws for a model with no such route rather than submitting a request the
-  endpoint must reject.
+- Forces the reference route whenever a scene matched at least one sheet.
+- Routes a scene that matched NO sheets (an abstract piece, an unmatched
+  location) to the model's `textToVideoEndpointId` (#1521). Every fal
+  reference-to-video endpoint rejects an empty image list ("At least one
+  reference image, video, or audio must be provided"); an empty bible is a
+  valid outcome, not a bug, so the shot renders prompt-only rather than failing.
+  The native Ark / xAI / Google builders already send plain text-to-video here.
+- Throws for a model with no reference route rather than submitting a request
+  the endpoint must reject.
 
 `buildReferenceVideoPrompt` drops the `Use @Image1 as the starting frame.` line
 and binds references from slot 1. Pointing the model at `@Image1` when
@@ -164,14 +168,18 @@ all. The whole `maxImages` budget goes to references.
 **BytePlus Ark** switches `size` from `adaptive_720p` to the sequence's own
 ratio. `adaptive` means "follow the frame", and there is no frame role in the
 request; Ark would size the clip from the first reference, so a portrait
-character sheet would silently render a 9:16 clip into a 16:9 sequence.
+character sheet would silently render a 9:16 clip into a 16:9 sequence. The
+same holds when a still IS supplied but the shot carries references: Ark's
+mix-ban demotes the still to a `reference` role, so `size` follows the roles
+actually emitted, not the presence of a still (#1809). `adaptive` is sent
+only with a real `start_frame`.
 
 Billing prices the reference-to-video endpoint the job actually hits, not the
 image-to-video row — the post-hoc charge (`motionCostFromUsage`), the workflow
 estimate (`calculateMotionMetadata`), AND the pre-flight credit gates, which
 take `referenceOnly` through `estimateVideoCost`. A reference-only shot routes
-to r2v even having matched no sheets at all, so resolving on `hasReferenceImages`
-alone under-prices exactly the shots with the least to go on.
+to r2v (or its t2v sibling with nothing matched), so resolving on
+`hasReferenceImages` alone under-prices exactly the shots with the least to go on.
 
 `video_variants.manifest` records `frameVersionId: null` — the documented
 encoding of "reference-driven shot with no dedicated first frame". Every write
@@ -204,16 +212,45 @@ predate reference-only and so were image-to-video.
 ## Model gating
 
 Only models in `MOTION_REFERENCE_ENDPOINTS` qualify — today Seedance 2.0 and
-2.5 and MiniMax H3 Max, whose `reference-to-video` route requires only a
-prompt and takes its images in `reference_image_urls` rather than `image_urls`
-(`imageField` on the endpoint config; every builder reads it, so a fourth model
-with a fourth field name needs no code).
+2.5, MiniMax H3 Max, Gemini Omni Flash and Kling O3 Pro, each with a
+`reference-to-video` route whose start frame is optional (H3 Max takes its
+images in `reference_image_urls` rather than `image_urls` — `imageField` on
+the endpoint config, so no builder needs to know the field name; a genuinely
+new field name still has to widen that union, and every new endpoint needs a
+transform registered in `endpoint-map.ts`) and a `textToVideoEndpointId`
+sibling for a shot that matched nothing (#1521).
 `supportsReferenceOnlyMotion` is keyed on the MODEL, not the resolved via — the
 conservative floor, safe in a pure isomorphic schema. It is NOT the question to
 ask anywhere a team's keys are reachable; see below.
 
-Kling is excluded — its `elements` ride on the image-to-video endpoint, which
-requires `image_url`.
+Kling v3 Pro start-frame-only shots stay on image-to-video. Shots with
+references, and reference-only shots, route to Kling O3 Pro
+(`fal-ai/kling-video/o3/pro/reference-to-video`) — the sibling whose start
+frame is optional. Catalog key stays `kling_v3_pro`.
+
+Three Kling-specific consequences of that split.
+
+**The still is pinned, not described.** O3 is the only reference endpoint with
+a real start-frame field, so a shot that rendered one sends it as
+`start_image_url` rather than as `image_urls[0]` with a "Use @Image1 as the
+starting frame." line. The frame is then guaranteed instead of requested, the
+image-to-video motion template's NO VISUAL REDUNDANCY rule ("the video model
+already sees these in the starting frame") is true again, and
+`usesStartFrame: true` keeps meaning what it says. Sheets number from
+`@Image1`, as in reference-only. `pinsDedicatedStartFrame` is the one place
+that decides, derived from the schema so it cannot drift.
+
+**Audio is resolved, not inherited.** `generate_audio` defaults to **false**
+on the O3 endpoints where v3 image-to-video defaults to **true** — every other
+endpoint in the catalog defaults true. `buildModelInput` therefore resolves
+the flag from the catalog rather than inheriting either default; otherwise
+whether a shot matched a cast sheet would decide whether the clip has sound.
+
+**The image budget is the tightest we have.** O3 takes 4 (Seedance 9, H3 Max
+9, Grok 7, Omni Flash 7). With the start frame in its own field all 4 go to
+sheets — the same budget the deleted inline `elements` path allowed — but a
+scene casting five still drops one, so the submit path warns and emits
+`motion_references_over_cap`.
 
 **Grok Imagine 1.5 is not excluded because it lacks references — it has them.**
 `GROK_VIDEO_REFERENCE_CONFIG` binds up to 7, `resolveMotionEndpoint` returns

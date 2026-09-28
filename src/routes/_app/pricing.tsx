@@ -3,17 +3,17 @@
  * rest of the product chrome (sidebar, breadcrumbs). Anonymous-browsable.
  */
 
-import { useAuthGate } from '@/components/auth/auth-gate-provider';
+import { useAuthGate } from '@/platform/ui/auth/auth-gate-provider';
 import { createFileRoute } from '@tanstack/react-router';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Badge } from '@/ui/shadcn/badge';
+import { Button } from '@/ui/shadcn/button';
 import {
   formatPlatformFeePercent,
   PLATFORM_FEE_PERCENT,
-} from '@/lib/billing/constants';
-import { getPricingCatalogFn } from '@/functions/pricing';
-import { openAddCreditsDialog } from '@/hooks/use-add-credits-dialog';
-import { SITE_CONFIG } from '@/lib/marketing/constants';
+} from '@/billing/constants';
+import { getPricingCatalogFn } from '@/billing/pricing.fn';
+import { openAddCreditsDialog } from '@/billing/ui/use-add-credits-dialog';
+import { SITE_CONFIG } from '@/ui/marketing/constants';
 import { ArrowUpRight, KeyRound } from 'lucide-react';
 
 const title = `Pricing — ${SITE_CONFIG.name}`;
@@ -55,16 +55,6 @@ function PricingPage() {
         <p className="mt-3 text-base leading-relaxed text-muted-foreground">
           Pay providers as you go. We show an estimate under each action before
           you spend.
-          {filmCosts ? (
-            <>
-              {' '}
-              New accounts start with{' '}
-              <span className="font-medium text-foreground tabular-nums">
-                {filmCosts.welcomeCredits}
-              </span>{' '}
-              free — enough for a typical 30s short with motion and music.
-            </>
-          ) : null}
         </p>
       </header>
 

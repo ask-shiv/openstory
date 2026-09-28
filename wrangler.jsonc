@@ -3,12 +3,19 @@
   "main": "./src/server.ts",
   "name": "openstory",
   "compatibility_date": "2025-11-18",
-  "compatibility_flags": ["nodejs_compat"],
+  // Realtime closes its upstream DO streams on request.signal abort. This
+  // opt-in has no default date: without it, disconnected SSE clients leave
+  // subscriptions and heartbeat timers alive. Inherited by production/test.
+  "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
   "triggers": {
     // Sweep stuck generating-status rows every 5 minutes (#727) and refresh
     // the model_pricing table daily (#1069 — the expression must match
-    // FAL_PRICING_CRON in src/lib/cron/refresh-fal-pricing.ts).
-    "crons": ["*/5 * * * *", "17 3 * * *", "37 * * * *"],
+    // FAL_PRICING_CRON in src/billing/server/refresh-fal-pricing.ts). Hourly at
+    // :53, diff this deployment's BytePlus asset group against the ledger
+    // (#1519 — BYTEPLUS_ASSETS_RECONCILE_CRON). Production's same tick also
+    // deletes leftover `openstory-virtual-pr-*` groups whose PRs are closed
+    // (#1635).
+    "crons": ["*/5 * * * *", "17 3 * * *", "37 * * * *", "53 * * * *"],
   },
   "observability": {
     "enabled": true,
@@ -18,7 +25,7 @@
       "head_sampling_rate": 1,
       "persist": true,
       // Disabled: redundant with our LogTape middleware (see
-      // src/functions/middleware.ts loggerMiddleware) which already emits
+      // src/platform/middleware.fn.ts loggerMiddleware) which already emits
       // per-serverFn timing/outcome. The CF-emitted "fetch OK" / "GET OK"
       // lines flooded the dashboard with empty headlines.
       "invocation_logs": false,
@@ -109,12 +116,20 @@
       "namespace_id": "1219",
       "simple": { "limit": 30, "period": 60 },
     },
+    // Per-user throttle for OAuth JWTs on POST /mcp (#1457). `osk_` keys
+    // reuse the api-key plugin limiter (10/s) instead. Not inherited by env
+    // blocks — redeclared below. 100 / 10s matches the key limiter.
+    {
+      "name": "MCP_JWT_RATE_LIMITER",
+      "namespace_id": "1457",
+      "simple": { "limit": 100, "period": 10 },
+    },
   ],
   "workflows": [
     // All durable async work runs on Cloudflare Workflows. Each class is
     // re-exported from src/server.ts (so it lands in the Worker bundle) and
     // its binding is resolved by `triggerWorkflow()` via TRIGGER_TO_BINDING in
-    // src/lib/workflow/trigger-bindings.ts. Keep these three in sync — the
+    // src/platform/server/workflow/trigger-bindings.ts. Keep these three in sync — the
     // wiring-consistency test enforces it.
     {
       "name": "image-workflow",
@@ -150,6 +165,16 @@
       "name": "character-sheet-workflow",
       "binding": "CHARACTER_SHEET_WORKFLOW",
       "class_name": "CharacterSheetWorkflow",
+    },
+    {
+      "name": "character-voice-workflow",
+      "binding": "CHARACTER_VOICE_WORKFLOW",
+      "class_name": "CharacterVoiceWorkflow",
+    },
+    {
+      "name": "dialogue-audio-workflow",
+      "binding": "DIALOGUE_AUDIO_WORKFLOW",
+      "class_name": "DialogueAudioWorkflow",
     },
     {
       "name": "location-sheet-workflow",
@@ -298,12 +323,24 @@
         "name": "REALTIME",
         "class_name": "RealtimeChannel",
       },
+      // BytePlus request governor (#1519): one token bucket per account so
+      // the Assets OpenAPI stays under its per-account quota. Tag v3 — v2 is
+      // the production/preview container, which the preview patch splices
+      // in ahead of this.
+      {
+        "name": "BYTEPLUS_GOVERNOR",
+        "class_name": "BytePlusGovernor",
+      },
     ],
   },
   "migrations": [
     {
       "tag": "v1",
       "new_sqlite_classes": ["RealtimeChannel"],
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["BytePlusGovernor"],
     },
   ],
   "env": {
@@ -323,6 +360,29 @@
       // `openstory-production`, which is a DIFFERENT worker — the deploy
       // would succeed but the live site would never update.
       "name": "openstory",
+      // Replaces the top-level block wholesale (inheritable keys are not
+      // merged), so logs are restated. Traces also go to PostHog Tracing via
+      // the `posthog-traces-openstory-prd` destination (Cloudflare dashboard →
+      // Workers → Observability → Destinations). Logs stay on the tail
+      // forwarder: the native logs destination shipped LogTape JSON as a blob.
+      // Traces sample 100% so every error has a trace. Every span is a billed
+      // event from 2026-10-01; ~4M/month measured (Sep 2026) vs 20M included.
+      "observability": {
+        "enabled": true,
+        "head_sampling_rate": 1,
+        "logs": {
+          "enabled": true,
+          "head_sampling_rate": 1,
+          "persist": true,
+          "invocation_logs": false,
+        },
+        "traces": {
+          "enabled": true,
+          "persist": true,
+          "head_sampling_rate": 1,
+          "destinations": ["posthog-traces-openstory-prd"],
+        },
+      },
       "d1_databases": [
         {
           "binding": "DB",
@@ -359,12 +419,18 @@
           "name": "SEND_EMAIL",
         },
       ],
-      // Device-code login throttle (not inherited; see top-level block).
+      // Device-code login throttle and MCP JWT throttle (not inherited;
+      // see top-level block).
       "ratelimits": [
         {
           "name": "DEVICE_LOGIN_RATE_LIMITER",
           "namespace_id": "1219",
           "simple": { "limit": 30, "period": 60 },
+        },
+        {
+          "name": "MCP_JWT_RATE_LIMITER",
+          "namespace_id": "1457",
+          "simple": { "limit": 100, "period": 10 },
         },
       ],
       // Workflow bindings are NOT inherited from the top-level block, so
@@ -405,6 +471,16 @@
           "name": "character-sheet-workflow",
           "binding": "CHARACTER_SHEET_WORKFLOW",
           "class_name": "CharacterSheetWorkflow",
+        },
+        {
+          "name": "character-voice-workflow",
+          "binding": "CHARACTER_VOICE_WORKFLOW",
+          "class_name": "CharacterVoiceWorkflow",
+        },
+        {
+          "name": "dialogue-audio-workflow",
+          "binding": "DIALOGUE_AUDIO_WORKFLOW",
+          "class_name": "DialogueAudioWorkflow",
         },
         {
           "name": "location-sheet-workflow",
@@ -552,7 +628,9 @@
         {
           "class_name": "VideoExportContainer",
           "image": "./containers/video-export/Dockerfile",
-          "instance_type": "standard",
+          // Mixed-res re-encode is decode+AVC encode; `standard` (½ vCPU) is
+          // too small. `standard-4` is 4 vCPU / 12 GiB / 20 GB disk.
+          "instance_type": "standard-4",
           "max_instances": 3,
         },
       ],
@@ -569,6 +647,10 @@
             "name": "VIDEO_EXPORT_CONTAINER",
             "class_name": "VideoExportContainer",
           },
+          {
+            "name": "BYTEPLUS_GOVERNOR",
+            "class_name": "BytePlusGovernor",
+          },
         ],
       },
       "migrations": [
@@ -580,9 +662,13 @@
           "tag": "v2",
           "new_sqlite_classes": ["VideoExportContainer"],
         },
+        {
+          "tag": "v3",
+          "new_sqlite_classes": ["BytePlusGovernor"],
+        },
       ],
       "triggers": {
-        "crons": ["*/5 * * * *", "17 3 * * *", "37 * * * *"],
+        "crons": ["*/5 * * * *", "17 3 * * *", "37 * * * *", "53 * * * *"],
       },
       // Same forwarder as the top-level default — redeclared because
       // tail_consumers is non-inheritable across env blocks.
@@ -599,7 +685,7 @@
     // The actual asset bytes come from the real fal.media URLs recorded in
     // the aimock fixtures. Record mode (`E2E_RECORD=1`) also stays local:
     // outbound URLs sent to real fal/OpenRouter are made fetchable via
-    // fal.storage.upload / data-URIs (see src/lib/storage/external-url.ts).
+    // fal.storage.upload / data-URIs (see src/platform/server/storage/external-url.ts).
     "test": {
       // These vars are visible inside the worker via getEnv() when
       // CLOUDFLARE_ENV=test (used by Playwright webServer + CI).
@@ -610,7 +696,7 @@
         "E2E_TEST": "true",
         // Note: a developer's .env.local R2_PUBLIC_STORAGE_DOMAIN could leak
         // into this worker env via the env-file merge, but it can't break
-        // e2e: isLocalStorageServing() (src/lib/storage/buckets.ts) forces
+        // e2e: isLocalStorageServing() (src/platform/server/storage/buckets.ts) forces
         // local /r2 serving whenever E2E_TEST is true.
         // E2E_FULL_PIPELINE and E2E_RECORD are intentionally NOT hardcoded here.
         // They're per-run flags: Playwright's webServer envPrefix sets them in
@@ -654,12 +740,18 @@
           "name": "SEND_EMAIL",
         },
       ],
-      // Device-code login throttle (not inherited; see top-level block).
+      // Device-code login throttle and MCP JWT throttle (not inherited;
+      // see top-level block).
       "ratelimits": [
         {
           "name": "DEVICE_LOGIN_RATE_LIMITER",
           "namespace_id": "1219",
           "simple": { "limit": 30, "period": 60 },
+        },
+        {
+          "name": "MCP_JWT_RATE_LIMITER",
+          "namespace_id": "1457",
+          "simple": { "limit": 100, "period": 10 },
         },
       ],
       // Workflow bindings are NOT inherited from the top-level block, so
@@ -700,6 +792,16 @@
           "name": "character-sheet-workflow",
           "binding": "CHARACTER_SHEET_WORKFLOW",
           "class_name": "CharacterSheetWorkflow",
+        },
+        {
+          "name": "character-voice-workflow",
+          "binding": "CHARACTER_VOICE_WORKFLOW",
+          "class_name": "CharacterVoiceWorkflow",
+        },
+        {
+          "name": "dialogue-audio-workflow",
+          "binding": "DIALOGUE_AUDIO_WORKFLOW",
+          "class_name": "DialogueAudioWorkflow",
         },
         {
           "name": "location-sheet-workflow",
@@ -848,12 +950,20 @@
             "name": "REALTIME",
             "class_name": "RealtimeChannel",
           },
+          {
+            "name": "BYTEPLUS_GOVERNOR",
+            "class_name": "BytePlusGovernor",
+          },
         ],
       },
       "migrations": [
         {
           "tag": "v1",
           "new_sqlite_classes": ["RealtimeChannel"],
+        },
+        {
+          "tag": "v3",
+          "new_sqlite_classes": ["BytePlusGovernor"],
         },
       ],
       // Explicit empty array opts out of inheritance and silences wrangler's

@@ -31,13 +31,15 @@ Each still is stored as its own item. Sign in first — generate is gated behind
 1. Open **Videos**
 2. Pick a mode from the dropdown on the left (**Reference to video** is the default):
    - **Text to video** — prompt only
-   - **Reference to video** — attach stills (Seedance 9 + 3 clips + 3 audio, Grok Imagine 7, Kling 4 via Kling O3 Pro, Veo 3). Each becomes `@Image1`… / `@Video1`… / `@Audio1`… Type `@` in the prompt to point at one, or at anything in your library — a cast headshot, a location, a generation — and it is attached for you.
-   - **Image to video** — a start frame, plus an optional end frame on models that take one (Kling, LTX, Seedance)
+   - **Reference to video** — attach stills (Seedance 9 + 3 clips + 3 audio, Grok Imagine 7, Kling 4). Each becomes `@Image1`… / `@Video1`… / `@Audio1`… Type `@` in the prompt to point at one, or at anything in your library — a cast headshot, a location, a generation — and it is attached for you.
+   - **Image to video** — a start frame, plus an optional end frame on models that take one (Kling, Seedance)
 3. Add references with the dashed tile. The picker lists your **Generations** (stills and clips), **Sequences** — open one to pick its shots, elements, cast, or locations — **Talent**, **Locations**, and **Audio** uploads. Or drag images onto the prompt bar.
 4. Write the prompt, **Shuffle** a sample, or **Draft prompt** — which looks at what you attached and writes a prompt that uses the tokens. Open the settings chip for model, aspect ratio, every duration the model accepts, and native audio.
 5. Press the arrow
 
 The library card plays the clip.
+
+**Draft first (Seedance 2.5, on by default).** Turn **Draft first** off in the settings chip to render at full quality straight away. A draft tile carries a **Draft** pill with the days left; when it looks right, press **Render final** on its card: the 1080p final is rendered from the draft itself — same seed, prompt and references — so what you approved is what you get. A draft can be rendered as a final for seven days.
 
 ## Paste a scene's request
 
@@ -47,4 +49,4 @@ Open a scene's **Optimised prompt** panel in a sequence, switch to **JSON**, cop
 
 - **Newest** and **Oldest** change recency order
 - **Favorites** pins items you star on a card
-- Open a card to see it full-size, **Download** it, or delete it
+- Open a card to see it full-size. Beside the clip: the prompt as readable text (line breaks instead of `\n` and other backslash escapes), the reference stills, clips, and audio that were attached, and the model settings. **Copy** takes the prompt. **Use again** loads that prompt, those references, and those settings back into the prompt bar. **Download** saves the file. The trash icon deletes it.

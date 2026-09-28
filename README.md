@@ -45,7 +45,7 @@ OpenStory takes a script and produces a sequence of AI-generated frames — imag
 | **Testing**    | [Vitest](https://vitest.dev) + [Playwright](https://playwright.dev)                                                                                                                           |
 | **Deployment** | [Cloudflare Workers](https://developers.cloudflare.com/workers)                                                                                                                               |
 
-> See [CLAUDE.md](CLAUDE.md) for full architecture documentation, server handler patterns, workflow patterns, and React conventions.
+> See [AGENTS.md](AGENTS.md) for full architecture documentation, server handler patterns, workflow patterns, and React conventions.
 
 ## Prerequisites
 
@@ -77,11 +77,13 @@ See [`.env.example`](.env.example) for all optional configuration (Google OAuth,
 
 ### Development
 
-| Command         | Description                                                |
-| --------------- | ---------------------------------------------------------- |
-| `bun dev`       | Bootstrap env, migrate + seed DB, start dev server         |
-| `bun setup`     | Interactive setup — add AI keys (`--prod` for deployments) |
-| `bun storybook` | Start Storybook on port 6006                               |
+| Command                | Description                                                |
+| ---------------------- | ---------------------------------------------------------- |
+| `bun dev`              | Bootstrap env, migrate + seed DB, start dev server         |
+| `bun setup`            | Interactive setup — add AI keys (`--prod` for deployments) |
+| `bun tunnel:provision` | Optional: 10 random public HTTPS names for ports 3000–3009 |
+| `bun tunnel`           | Print this laptop's hostname map                           |
+| `bun storybook`        | Start Storybook on port 6006                               |
 
 ### Quality
 
@@ -138,7 +140,7 @@ e2e/              # Playwright end-to-end tests
 scripts/          # CLI utilities and setup
 ```
 
-> See [CLAUDE.md](CLAUDE.md) for detailed architecture, data model, server handler patterns, and code conventions.
+> See [AGENTS.md](AGENTS.md) for detailed architecture, data model, server handler patterns, and code conventions.
 
 ## Deployment
 
@@ -150,7 +152,7 @@ The deploy button clones the repo into your Cloudflare account, provisions the r
 
 **CI/CD:** Cloudflare Workers Builds auto-deploys on push to `main` — the same mechanism deploy-button clones use. Pull requests get GitHub Actions preview deployments with dedicated D1 databases.
 
-> See the [Platform & Deployment](CLAUDE.md#platform--deployment) section in CLAUDE.md for environment variable configuration and platform detection.
+> See the [Platform & Deployment](AGENTS.md#platform--deployment) section in AGENTS.md for environment variable configuration and platform detection.
 
 ## Contributing
 

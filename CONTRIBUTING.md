@@ -2,7 +2,7 @@
 
 Thanks for your interest in contributing! OpenStory is MIT-licensed and we welcome contributions of all kinds — bug reports, feature requests, documentation improvements, and code.
 
-For detailed architecture documentation, see [CLAUDE.md](CLAUDE.md).
+For detailed architecture documentation, see [AGENTS.md](AGENTS.md).
 
 ## Getting Started
 
@@ -53,14 +53,16 @@ Lefthook automatically tags commits with the issue number extracted from the bra
 
 Key commands:
 
-| Command         | Description                                                     |
-| --------------- | --------------------------------------------------------------- |
-| `bun dev`       | Start the app dev services                                      |
-| `bun dev:all`   | Same as `bun dev` plus the Stripe listener                      |
-| `bun run build` | Build for production (**not** `bun build` — that's the bundler) |
-| `bun typecheck` | Type-check with tsgo                                            |
-| `bun run test`  | Run unit tests (Vitest)                                         |
-| `bun test:e2e`  | Run Playwright end-to-end tests                                 |
+| Command                | Description                                                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `bun dev`              | Start the app dev services                                                                                                |
+| `bun dev:all`          | Same as `bun dev` plus the Stripe listener                                                                                |
+| `bun tunnel:provision` | Once per laptop: map ports 3000–3009 to random `*.openstory.so` names ([docs](docs/developer-guide/local-dev-tunnels.md)) |
+| `bun tunnel`           | Print that map and the Google OAuth redirect URIs                                                                         |
+| `bun run build`        | Build for production (**not** `bun build` — that's the bundler)                                                           |
+| `bun typecheck`        | Type-check with tsgo                                                                                                      |
+| `bun run test`         | Run unit tests (Vitest)                                                                                                   |
+| `bun test:e2e`         | Run Playwright end-to-end tests                                                                                           |
 
 ## Code Quality
 
@@ -120,17 +122,20 @@ bun test:e2e:full     # Full pipeline: real Cloudflare Workflows, fal+LLM via ai
 The full-pipeline test (`e2e/tests/full-sequence.spec.ts`) replays AI responses from `e2e/fixtures/recorded/`. To capture or refresh them:
 
 ```bash
-# With real keys in .env.local (FAL_KEY, OPENROUTER_KEY):
+# With real keys in .env.local (FAL_KEY, OPENROUTER_KEY, XAI_API_KEY):
+# wrangler login required — the post-step uploads media to openstory-public-assets.
 bun test:e2e:full:record
 ```
 
+Recording always runs `scripts/mirror-e2e-fixture-media.ts` afterwards, which copies provider media (`fal.media`, `imgen.x.ai`, …) to `assets.openstory.so/e2e/<sha>.<ext>` and rewrites the fixtures. Replay fetches those bytes for real, and the provider CDNs expire.
+
 Commit the generated fixtures alongside any code change that alters AI prompts or model selection.
 
-> See the [Testing](CLAUDE.md#testing) section in CLAUDE.md for mock patterns and database testing conventions.
+> See the [Testing](AGENTS.md#testing) section in AGENTS.md for mock patterns and database testing conventions.
 
 ## Database Changes
 
-1. Modify schema files in `src/lib/db/schema/`
+1. Modify schema files in `src/platform/server/db/schema/`
 2. Generate migration: `bun db:generate`
 3. Apply migration: `bun db:migrate:local` (also runs as part of `bun dev`)
 
@@ -143,7 +148,7 @@ Commit the generated fixtures alongside any code change that alters AI prompts o
 
 ## Code Conventions
 
-A brief summary — see [CLAUDE.md](CLAUDE.md) for full patterns with examples.
+A brief summary — see [AGENTS.md](AGENTS.md) for full patterns with examples.
 
 ### TypeScript
 
@@ -167,8 +172,8 @@ A brief summary — see [CLAUDE.md](CLAUDE.md) for full patterns with examples.
 ### Server
 
 - DB access only in server handlers — never in components
-- Follow the [server handler pattern](CLAUDE.md#server-handler-pattern) in CLAUDE.md
-- Trigger workflows via `triggerWorkflow()` from `@/lib/workflow/client` — never direct `fetch()` calls
+- Follow the [server handler pattern](AGENTS.md#server-handler-pattern) in AGENTS.md
+- Trigger workflows via `triggerWorkflow()` from `@/platform/server/workflow/client` — never direct `fetch()` calls
 
 ## Pull Request Process
 

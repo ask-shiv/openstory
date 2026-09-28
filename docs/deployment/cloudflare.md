@@ -101,13 +101,13 @@ bun db:migrate:prd         # flatten → wrangler d1 migrations apply DB --env=p
   files directly against the Miniflare binding (`bun db:migrate:local`).
 
 Migrations must stay backwards-compatible for the moment between migrate and
-deploy, and the D1 table-rebuild CASCADE trap (see CLAUDE.md) applies to every
+deploy, and the D1 table-rebuild CASCADE trap (see AGENTS.md) applies to every
 remote apply path.
 
 ## Seeding
 
 There are no CI seed steps: the worker self-seeds system templates on first
-request (`src/server.ts` → `src/lib/db/seed-system-templates.ts`). A hash of
+request (`src/server.ts` → `src/platform/server/db/seed-system-templates.ts`). A hash of
 the template definitions is stored in `app_metadata`; when it matches, the
 check is a single SELECT per isolate, and when it doesn't (fresh database, or
 a deploy that changed templates) the idempotent sync runs once. `bun
@@ -195,7 +195,7 @@ Production pushes to `main` deploy via Workers Builds (see [Build & Deploy](#bui
 OpenStory automatically detects the deployment platform:
 
 ```typescript
-import { getDeploymentPlatform } from '@/lib/utils/environment';
+import { getDeploymentPlatform } from '@/shared/utils/environment';
 
 const platform = getDeploymentPlatform();
 // Returns: 'cloudflare' | 'local' | 'unknown'

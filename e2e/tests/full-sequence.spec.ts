@@ -29,6 +29,7 @@ import {
   createTestStyle,
   getTestSequenceShots,
   getTestSequenceStatus,
+  getTestShot,
 } from '../fixtures/sequence.fixture';
 import {
   getSystemTalentByName,
@@ -36,6 +37,7 @@ import {
 } from '../fixtures/talent.fixture';
 import {
   fillScriptEditor,
+  openComposerReference,
   pinRecordedPipelineSettings,
   selectComposerStyle,
   selectRecordedPipelineModels,
@@ -196,8 +198,8 @@ testWithUser.describe('Full Sequence Pipeline', () => {
         }
       });
 
-      // 1. Open the new-sequence page. Pin Quality + recorded Grok/Seedance
-      // before first paint so Turbo (Lite / H3 Max) never hits aimock.
+      // 1. Open the new-sequence page. Pin Quality + recorded Grok/H3 Max
+      // before first paint so Turbo's Lite never hits aimock.
       await pinRecordedPipelineSettings(page);
       await page.goto('/sequences/new');
 
@@ -261,10 +263,7 @@ SUPER:  CORAL.  OUT NOW.
       );
 
       // 5. Pick talent.
-      await page
-        .locator('main')
-        .getByRole('button', { name: 'Talent' })
-        .click();
+      await openComposerReference(page, 'Talent');
       const talentDialog = page.getByRole('dialog');
       await expect(talentDialog).toBeVisible({ timeout: 10_000 });
       const firstTalent = testTalents[0];
@@ -276,10 +275,7 @@ SUPER:  CORAL.  OUT NOW.
       await expect(talentDialog).not.toBeVisible();
 
       // 6. Pick location.
-      await page
-        .locator('main')
-        .getByRole('button', { name: 'Locations' })
-        .click();
+      await openComposerReference(page, 'Locations');
       const locationDialog = page.getByRole('dialog');
       await expect(locationDialog).toBeVisible({ timeout: 10_000 });
       if (!testLocation) throw new Error('testLocation not initialised');
@@ -294,10 +290,11 @@ SUPER:  CORAL.  OUT NOW.
         resolve(import.meta.dirname, '../fixtures/broadcast-mic.jpg')
       );
 
-      // 7b. Quality + Grok Imagine 2.0 + Seedance 2.0. Style apply can
+      // 7b. Quality + Grok Imagine 2.0 + MiniMax H3 Max. Style apply can
       // remap recommendations; the recorded fal folders are those two
-      // endpoints (Grok 2.0 edit/t2i, Seedance 2.0 r2v). Turbo's Lite /
-      // H3 Max have no recordings.
+      // endpoints (Grok 2.0 edit/t2i, H3 Max r2v). H3 Max is fal-only, so a
+      // record run can never wander off to Ark. Turbo's Lite has no
+      // recordings.
       await selectRecordedPipelineModels(page);
 
       // 8. Generate — should kick off the workflow chain and navigate.
@@ -309,19 +306,22 @@ SUPER:  CORAL.  OUT NOW.
       await page.getByRole('button', { name: /^Generate$/i }).click();
 
       // Generate opens the stop-at alert (#1408) rather than starting the run.
-      // Its default is the full pipeline ("Music & Motion"), which is what this
+      // Its default is the full pipeline ("Motion & Music"), which is what this
       // spec asserts, so confirm without touching the slider. Scoped to the
       // dialog because the confirm button is also called "Generate".
       const stopAtAlert = page.getByRole('alertdialog');
       await expect(
-        stopAtAlert.getByText('How much control do you want?')
+        stopAtAlert.getByText('Generate the whole sequence?')
       ).toBeVisible({ timeout: t(10_000) });
       await stopAtAlert.getByRole('button', { name: /^Generate$/i }).click();
 
       // Generate kicks off the scene-split workflow before the redirect lands.
-      await page.waitForURL(/\/sequences\/[^/]+\/scenes/, {
-        timeout: t(30_000),
-      });
+      await page.waitForURL(
+        /\/sequences\/[0-7][0-9A-HJKMNP-TV-Z]{25}\/scenes/,
+        {
+          timeout: t(30_000),
+        }
+      );
       const match = page.url().match(/\/sequences\/([^/]+)\/scenes/);
       const sequenceId = match?.[1];
       if (!sequenceId) {
@@ -329,18 +329,13 @@ SUPER:  CORAL.  OUT NOW.
       }
       createdSequenceId = sequenceId;
 
-      // Progressive reveal (#1091): analysis lands on the forced script view —
-      // the canvas has nothing to show until the first shot preview arrives.
-      // Assert immediately after the redirect, before any preview can land
-      // and auto-reveal the canvas.
-      //
-      // The toggle itself only exists post-hydration, so wait for it to render
-      // before reading `data-state` — on the bare 5s expect timeout the
-      // assertion could fail because the control had not mounted yet, which
-      // looks identical to the view being wrong.
-      const scriptToggle = page.getByRole('radio', { name: 'Show the script' });
-      await expect(scriptToggle).toBeVisible({ timeout: t(15_000) });
-      await expect(scriptToggle).toHaveAttribute('data-state', 'on');
+      // Progressive reveal (#1091): the split lands on the forced script view
+      // and the first shot preview auto-reveals the canvas. Under aimock that
+      // preview can land before this page hydrates, so don't assert the
+      // script state — just wait for the reveal.
+      await expect(
+        page.getByRole('radio', { name: 'Show the canvas' })
+      ).toHaveAttribute('data-state', 'on', { timeout: t(60_000) });
 
       // 9. Wait for storyboard + shot images to land in the DB.
       //
@@ -350,15 +345,17 @@ SUPER:  CORAL.  OUT NOW.
       //   - video: grok "Handheld camera tracks forward…"
       // so the vanity scene's primary image and that clip's video each fail
       // once and are rescued by the workflow retry (image: CF default step
-      // retry; motion: submit→poll loop). The "every shot completed" /
-      // "every shot has video" assertions below therefore also prove the
-      // retry path end-to-end — no separate spec needed.
+      // retry; motion: submit→poll loop). Every shot should have a thumbnail
+      // (selected still, or the skipStorage animatic preview while that still
+      // is in flight).
       await expect
         .poll(
           async () => {
             const shots = await getTestSequenceShots(sequenceId);
             if (shots.length === 0) return false;
-            return shots.every((f) => f.thumbnailStatus === 'completed');
+            return shots.every(
+              (s) => s.thumbnailStatus === 'completed' && s.thumbnailUrl
+            );
           },
           { timeout: 600_000, intervals: [2_000, 5_000, 10_000] }
         )
@@ -386,11 +383,10 @@ SUPER:  CORAL.  OUT NOW.
         )
         .toBe(true);
 
-      // 11. Per-scene playback: click through every scene-list-item and
-      //     assert the active <video> in the ScenePlayer is decodable.
-      //     The list item carries `data-testid="scene-list-item"` so we can
-      //     enumerate without relying on title text. Shots are nested under
-      //     scene-group headers after stream-time scene persistence (#1072).
+      // 11. Per-clip playback: click each shot and assert the ScenePlayer
+      //     <video> is decodable. Packed in-clip renders (#1510) share one
+      //     URL across a scene's shots when they fit the model cap; those
+      //     siblings must still play, they just must not require a src switch.
       //
       //     The player only shows the scene's <video> on a video tab; the
       //     default "Variants" tab (the multi-model scene-review UX, #545)
@@ -409,23 +405,37 @@ SUPER:  CORAL.  OUT NOW.
       await expect(canvasToggle).toBeEnabled();
       await expect(canvasToggle).toHaveAttribute('data-state', 'on');
 
-      const sceneItems = page.locator('[data-testid="scene-list-item"]');
-      const sceneCount = await sceneItems.count();
-      expect(sceneCount, 'sequence has at least one scene').toBeGreaterThan(0);
-      await sceneItems.first().click();
+      const clips = await getTestSequenceShots(sequenceId);
+      expect(
+        clips.length,
+        'sequence has at least one rendered clip'
+      ).toBeGreaterThan(0);
+      const firstClip = clips[0];
+      if (!firstClip) {
+        throw new Error('sequence has no rendered clip');
+      }
+      await page.locator(`[data-shot-id="${firstClip.id}"]`).click();
       await page.getByRole('tab', { name: 'Video' }).click();
       // Scope to visible videos: the hidden next-scene prefetch is a <video>
       // too, and while the player swaps scenes its own element can drop out of
       // the DOM, so a bare `video` locator resolves to the prefetch.
       const playerVideo = page.locator('video:visible').first();
       let assertedSrc = '';
-      for (let i = 0; i < sceneCount; i++) {
-        await sceneItems.nth(i).click();
-        assertedSrc = await expectSceneVideoPlayable(
-          playerVideo,
-          assertedSrc,
-          `scene ${i + 1} video`
-        );
+      let previousVideoUrl: string | null = null;
+      for (const clip of clips) {
+        await page.locator(`[data-shot-id="${clip.id}"]`).click();
+        const label = `scene ${clip.orderIndex + 1} shot ${clip.shotNumber} video`;
+        // Packed siblings share a clip URL; do not wait for a src switch.
+        if (clip.videoUrl && clip.videoUrl === previousVideoUrl) {
+          await expectPlayableMedia(playerVideo, label);
+        } else {
+          assertedSrc = await expectSceneVideoPlayable(
+            playerVideo,
+            assertedSrc,
+            label
+          );
+        }
+        previousVideoUrl = clip.videoUrl;
       }
 
       // 12. Music playback in the Scenes editor Music facet (#986).
@@ -436,16 +446,22 @@ SUPER:  CORAL.  OUT NOW.
       );
 
       // 13. Whole-sequence playback in the Scenes canvas (#986) — nothing
-      //     selected uses SequencePlayer (mediabunny → <canvas>). Play only
-      //     mounts after prepare() resolves.
+      //     selected uses SequencePlayer: the playlist of the clips through
+      //     Video.js (#1623), or the mediabunny canvas stitch if that fails
+      //     (#1258). Play is in the skin from first paint; the first-frame
+      //     overlay covers it until the source has loaded
+      //     (`data-state="ready"`).
       await page.goto(`/sequences/${sequenceId}/scenes`);
 
-      // Wait for either the Play button (success) or the player error state.
+      // Wait for prepare() (data-state=ready) or the player error state.
       // A hanging prepare() (common with raw AI-generated motion clips during
       // fresh recording) will still hit the outer timeout, but at least an
       // actual rejection from SequencePlayerEngine.prepare() will now fail
       // fast with the real error message instead of a useless "Play button not
-      // found after 10 minutes".
+      // found after 10 minutes". Do not treat a visible Play control as ready:
+      // the skin mounts it before prepare, and Playwright isVisible() ignores
+      // the covering skeleton.
+      const theatrePlayer = page.getByTestId('sequence-player');
       await expect
         .poll(
           async () => {
@@ -456,16 +472,18 @@ SUPER:  CORAL.  OUT NOW.
                 `Theatre player failed to initialize: ${msg || '(no message)'}`
               );
             }
-            const playBtn = page.getByRole('button', { name: 'Play' });
-            return await playBtn.isVisible();
+            return (await theatrePlayer.getAttribute('data-state')) === 'ready';
           },
           {
             timeout: t(60_000),
             message:
-              'theatre: Play button visible (player initialized) or player errored',
+              'theatre: sequence-player data-state=ready (prepared) or player errored',
           }
         )
         .toBe(true);
+      await expect(
+        theatrePlayer.getByRole('button', { name: 'Play' })
+      ).toBeVisible();
 
       // 14. Thin DB sanity tail: a UI bug that silently hides a player
       //     mustn't make the test pass green. We've already proved every
@@ -478,6 +496,26 @@ SUPER:  CORAL.  OUT NOW.
       for (const shot of finalShots) {
         expect(shot.videoUrl, `shot ${shot.id} missing video`).toBeTruthy();
       }
+
+      // 15. Drain the variant grids. They are fire-and-forget, so nothing
+      //     above waits on them — and a record run that ends while one is
+      //     still at api.x.ai never writes that fixture (#1585 lost scene 1
+      //     shot 3's contact sheet that way). Instant on replay.
+      await expect
+        .poll(
+          async () => {
+            const grids = await Promise.all(
+              finalShots.map((shot) => getTestShot(shot.id))
+            );
+            return grids.every(
+              (grid) =>
+                grid?.variantImageStatus === 'completed' ||
+                grid?.variantImageStatus === 'failed'
+            );
+          },
+          { timeout: t(60_000), message: 'every shot variant grid settled' }
+        )
+        .toBe(true);
 
       // Log any captured browser issues so they're visible in stdout / the
       // HTML report, but don't fail the test on them. Driving this list to

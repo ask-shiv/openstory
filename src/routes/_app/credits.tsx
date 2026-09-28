@@ -3,12 +3,12 @@
  * Balance, transactions, and gift codes in a single tabbed view
  */
 
-import { RouteErrorFallback } from '@/components/error/route-error-fallback';
-import { BillingSettings } from '@/components/settings/billing-settings';
-import { GiftCodeSettings } from '@/components/settings/gift-code-settings';
-import { TransactionSettings } from '@/components/settings/transaction-settings';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { requireSessionOrRedirect } from '@/lib/auth/route-guards';
+import { RouteErrorFallback } from '@/ui/error/route-error-fallback';
+import { BillingSettings } from '@/ui/settings/billing-settings';
+import { GiftCodeSettings } from '@/ui/settings/gift-code-settings';
+import { TransactionSettings } from '@/ui/settings/transaction-settings';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/ui/shadcn/tabs';
+import { requireSessionOrRedirect } from '@/platform/ui/auth/route-guards';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { Gift, Receipt, Wallet } from 'lucide-react';
 import { z } from 'zod';
@@ -20,6 +20,7 @@ const searchSchema = z.object({
   success: z.boolean().optional(),
   canceled: z.boolean().optional(),
   session_id: z.string().max(256).optional(),
+  card_saved: z.boolean().optional(),
 });
 
 export const Route = createFileRoute('/_app/credits')({
@@ -53,7 +54,13 @@ const tabs = [
 ];
 
 function CreditsPage() {
-  const { tab, success, canceled, session_id: sessionId } = Route.useSearch();
+  const {
+    tab,
+    success,
+    canceled,
+    session_id: sessionId,
+    card_saved: cardSaved,
+  } = Route.useSearch();
   const navigate = useNavigate();
 
   return (
@@ -85,6 +92,7 @@ function CreditsPage() {
             success={success}
             canceled={canceled}
             sessionId={sessionId}
+            cardSaved={cardSaved}
           />
         </TabsContent>
         <TabsContent value="transactions">

@@ -1,10 +1,13 @@
-import { getEnv } from '#env';
-import { getProductionDeploymentAppUrl } from '@/lib/utils/environment';
-import { DocsReferrerTracker } from '@/components/docs/docs-referrer-tracker';
-import { DefaultNotFound } from '@/components/error/default-not-found';
-import { Providers } from '@/components/providers';
-import { Button } from '@/components/ui/button';
-import { SITE_CONFIG } from '@/lib/marketing/constants';
+// Used only inside createIsomorphicFn().server(…) below. The Start compiler
+// strips that body from the client build; the boundary test models the strip.
+// oxlint-disable-next-line boundaries/no-server-imports
+import { getProductionDeploymentAppUrl } from '@/platform/server/env/environment';
+import { IS_PREVIEW_DEPLOYMENT } from '@/platform/flags';
+import { DocsReferrerTracker } from '@/ui/docs/docs-referrer-tracker';
+import { DefaultNotFound } from '@/ui/error/default-not-found';
+import { Providers } from '@/ui/providers';
+import { Button } from '@/ui/shadcn/button';
+import { SITE_CONFIG } from '@/ui/marketing/constants';
 import appCss from '@/styles/global.css?url';
 import type { QueryClient } from '@tanstack/react-query';
 import type { ErrorComponentProps } from '@tanstack/react-router';
@@ -23,14 +26,6 @@ import { getRequest } from '@tanstack/react-start/server';
 type RouterContext = {
   queryClient: QueryClient;
 };
-const getIsPreviewFn = createIsomorphicFn()
-  .server(() => {
-    const appUrl = getEnv().VITE_APP_URL;
-    if (!appUrl) return true;
-    return appUrl.includes('pr-');
-  })
-  .client(() => false);
-
 const getCanonicalOriginFn = createIsomorphicFn().server(() => {
   const request = getRequest();
   const host =
@@ -57,7 +52,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
     }
   },
   head: () => {
-    const isPreview = getIsPreviewFn();
+    const isPreview = IS_PREVIEW_DEPLOYMENT;
     return {
       meta: [
         ...(isPreview
@@ -129,20 +124,6 @@ export const Route = createRootRouteWithContext<RouterContext>()({
           href: '/apple-touch-icon.png',
         },
         { rel: 'manifest', href: '/manifest.json' },
-        { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
-        {
-          rel: 'preconnect',
-          href: 'https://fonts.gstatic.com',
-          crossOrigin: 'anonymous',
-        },
-        {
-          rel: 'stylesheet',
-          href: 'https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Instrument+Serif:ital@0;1&display=swap',
-        },
-        {
-          rel: 'stylesheet',
-          href: 'https://api.fontshare.com/v2/css?f[]=satoshi@400,500,600,700&display=swap',
-        },
       ],
     };
   },

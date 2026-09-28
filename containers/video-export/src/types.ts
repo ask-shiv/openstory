@@ -2,7 +2,7 @@
  * Wire contract between the Worker (the export workflow) and this container.
  *
  * Keep in sync with the Worker-side copy in
- * `src/lib/workflows/sequence-export-workflow.ts` (`ContainerExportJob`).
+ * `src/sequences/server/workflows/sequence-export-workflow.ts` (`ContainerExportJob`).
  */
 
 export type ExportSceneInput = {
@@ -18,7 +18,7 @@ export type ExportJob = {
   musicUrl: string | null;
   /**
    * Precomputed music gain in dB. `null` triggers an in-process EBU R128
-   * measurement so the server export matches the browser export's loudness.
+   * measurement so the server export matches live playback loudness.
    */
   musicLoudnessGainDb: number | null;
 };
@@ -26,7 +26,7 @@ export type ExportJob = {
 /** Returned as response headers alongside the MP4 body. */
 export type ExportResultMeta = {
   durationSeconds: number;
-  /** True when the transmux fast path was unavailable (currently rejected). */
+  /** True when scenes were decoded and re-encoded (mixed res / codec). */
   reEncoded: boolean;
   /** Distinct scene resolutions when mixed, else "". */
   resolutionsLabel: string;

@@ -1,0 +1,246 @@
+/**
+ * Characters Schema
+ * Scripted characters (roles) extracted from scripts, linked to talent for casting
+ */
+
+import type { InferInsertModel, InferSelectModel } from 'drizzle-orm';
+import {
+  index,
+  integer,
+  snakeCase,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/sqlite-core';
+import { generateId } from '@/platform/id';
+import type { CharacterBible } from './bible-versions';
+import { sequences } from './sequences';
+import { talent } from './talent';
+
+const SHEET_STATUSES = [
+  'pending',
+  'generating',
+  'completed',
+  'failed',
+] as const;
+export type SheetStatus = (typeof SHEET_STATUSES)[number];
+
+/** Why a parked take can no longer be saved (#1709). */
+export type VoicePreviewUnusable = 'saved' | 'expired';
+
+/** One Voice Design audition: the ElevenLabs preview id + its MP3 in R2. */
+export type VoicePreview = {
+  generatedVoiceId: string;
+  url: string;
+  path: string;
+  /** 1-based generation order. Travels with the card when a take is promoted (#1709). */
+  takeNumber?: number;
+  /**
+   * Set once this generatedVoiceId cannot be created again: we already
+   * saved it (one-shot), or ElevenLabs no longer has the preview.
+   */
+  unusable?: VoicePreviewUnusable;
+};
+
+/**
+ * Characters table
+ * Stores characters extracted from a sequence's script with their generated reference sheets
+ * and optional casting assignment to talent
+ */
+export const characters = snakeCase.table(
+  'characters',
+  {
+    id: text()
+      .$defaultFn(() => generateId())
+      .primaryKey()
+      .notNull(),
+    sequenceId: text()
+      .notNull()
+      .references(() => sequences.id, { onDelete: 'cascade' }),
+    // Casting assignment (which talent plays this character)
+    talentId: text().references(() => talent.id, {
+      onDelete: 'set null',
+    }),
+    // From script analysis
+    characterId: text().notNull(), // e.g. "char_001" from script analysis
+    // The live `character_bible_versions` row (#1600): the bible IS that row.
+    // No FK (same cycle-avoidance as the sheet pointer). Null only on a row
+    // written by a worker older than #1600, which reads the legacy columns.
+    selectedBibleVersionId: text(),
+    // LEGACY bible columns (#1600). The bible lives in
+    // `character_bible_versions`; these are read only as the fallback for a
+    // row with no version (`scoped/characters.ts`), and written only where
+    // NOT NULL forces a value on insert. The `legacy` names keep the SQL
+    // column names but make every raw reader a compile error. Drop them once
+    // a deploy has run with no writer and a second backfill.
+    legacyName: text('name', { length: 255 }).notNull(),
+    legacyAge: text('age'),
+    legacyGender: text('gender'),
+    legacyEthnicity: text('ethnicity'),
+    legacyPhysicalDescription: text('physical_description'),
+    legacyStandardClothing: text('standard_clothing'),
+    legacyDistinguishingFeatures: text('distinguishing_features'),
+    legacyPersonality: text('personality'),
+    legacyMovement: text('movement'),
+    legacyVoiceOnly: integer('voice_only', { mode: 'boolean' })
+      .default(false)
+      .notNull(),
+    legacyIsPerson: integer('is_person', { mode: 'boolean' })
+      .default(true)
+      .notNull(),
+    legacyConsistencyTag: text('consistency_tag'),
+    // Voice (#1553). `voiceId` is an ElevenLabs voice on the PLATFORM account;
+    // the same id is copied onto `talent.voiceId` at save-to-library and
+    // back at cast, so release through `releaseVoiceIfUnreferenced`, never a
+    // bare delete. Nullable: a character without a voice is a legitimate
+    // state, not an unknown. `voicePreviews` are the Voice Design auditions
+    // in R2 (the first is the saved voice). `useVoice` NULL = inherit
+    // `sequences.generateVoices` — resolve with `usesVoice()`, never raw.
+    voiceId: text(),
+    voiceDescription: text(),
+    voicePreviews: text({ mode: 'json' }).$type<VoicePreview[]>(),
+    useVoice: integer({ mode: 'boolean' }),
+    // The selected `character_voice_versions` row (#1657). The voice columns
+    // above are that row's values, mirrored for readers; `selectVoiceVersion`
+    // moves the pointer and the mirror together. Null on rows from before
+    // voice history, and until the first voice write.
+    selectedVoiceVersionId: text(),
+    // Soft pointer to the in-flight `character_voice_versions` husk that
+    // should become selected when Voice Design completes (#1715) — same job
+    // as `frames.pendingPromoteVersionId`. One live husk (a second Generate
+    // no-ops); picking a completed voice or failing this husk clears it.
+    // Persist promotes only when this still names the finishing row.
+    pendingPromoteVoiceVersionId: text(),
+    // First appearance in script
+    firstMentionSceneId: text(),
+    firstMentionText: text(),
+    firstMentionLine: integer(),
+    // Generation lifecycle. NOT a mirror of the version row's status: these
+    // are stamped when no variant exists yet — 'generating' at trigger time,
+    // 'failed' when the workflow dies. #1067 kept frames.imageStatus /
+    // imageError for the same reason (#1419).
+    sheetStatus: text().$type<SheetStatus>().default('pending').notNull(),
+    sheetError: text(),
+    // Soft pointer to the live `character_sheet_variants` row (#1108 sheet
+    // versions). No FK — same cycle-avoidance as frames.selectedImageVersionId.
+    // Null on rows the #1419 backfill snapshotted rather than a user
+    // selecting: for those the live version is the one keyed to this row's own
+    // id, and it fills in the first time anyone re-rolls or selects.
+    selectedSheetVersionId: text(),
+    // The sheet claim (#1113): the id the in-flight sheet run's version row
+    // will carry. Set at the trigger (last kickoff wins); cleared by every
+    // write that changes a sheet input or picks a sheet. The run promotes its
+    // row only while this still names it, else parks it as divergent. Null
+    // when no run holds the pointer.
+    pendingPromoteSheetVersionId: text(),
+    // Soft-remove from the sequence (#1108 Phase 2, undoable). Deleted rows
+    // are excluded from default lists / prompt-context bibles but keep their
+    // sheet + bible fields, so restore is lossless. Continuity tags on scenes
+    // are NOT stripped on delete (plan §1: leave tags + warning).
+    deletedAt: integer({ mode: 'timestamp' }),
+    // Timestamps
+    createdAt: integer({ mode: 'timestamp' })
+      .$defaultFn(() => new Date())
+      .notNull(),
+    updatedAt: integer({ mode: 'timestamp' })
+      .$defaultFn(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    index('idx_characters_sequence_id').on(table.sequenceId),
+    index('idx_characters_talent_id').on(table.talentId),
+    // Unique constraint: one character per sequence/characterId combination
+    uniqueIndex('characters_sequence_character_key').on(
+      table.sequenceId,
+      table.characterId
+    ),
+  ]
+);
+
+// Type exports
+
+/**
+ * The stored row, legacy bible columns included. Only the scoped characters
+ * module sees it; everything else reads {@link Character}.
+ */
+export type CharacterRow = InferSelectModel<typeof characters>;
+
+/** The legacy bible columns (#1600) — never read outside the resolver. */
+export type LegacyCharacterBibleColumn =
+  | 'legacyName'
+  | 'legacyAge'
+  | 'legacyGender'
+  | 'legacyEthnicity'
+  | 'legacyPhysicalDescription'
+  | 'legacyStandardClothing'
+  | 'legacyDistinguishingFeatures'
+  | 'legacyPersonality'
+  | 'legacyMovement'
+  | 'legacyVoiceOnly'
+  | 'legacyIsPerson'
+  | 'legacyConsistencyTag';
+
+/**
+ * A character with its bible resolved from the selected
+ * `character_bible_versions` row (#1600). Carries no sheet image — see
+ * {@link CharacterWithSheet}.
+ */
+export type Character = Omit<CharacterRow, LegacyCharacterBibleColumn> &
+  CharacterBible;
+
+/**
+ * A character as every scoped READ returns it: the row plus the live sheet,
+ * resolved from `selected_sheet_version_id` (#1419).
+ *
+ * The four sheet fields are no longer columns — they were duplicates of the
+ * `character_sheet_variants` row the pointer names, and a re-analysis could
+ * blank them while the version rows stayed intact. `scoped/characters.ts`
+ * joins the live version and re-adds them under the same names, so consumers
+ * did not change. A raw row straight from an INSERT/UPDATE `returning()` is a
+ * {@link Character} and does NOT have them — which is the point: reading a
+ * sheet off a write result is a type error, not a silent null.
+ */
+export type CharacterWithSheet = Character & {
+  sheetImageUrl: string | null;
+  sheetImagePath: string | null;
+  sheetGeneratedAt: Date | null;
+  sheetInputHash: string | null;
+};
+
+/**
+ * A new character: the row's own columns plus the bible its first version
+ * row carries. `voiceOnly` / `isPerson` default to false / true, as the
+ * columns did.
+ */
+export type NewCharacter = Omit<
+  InferInsertModel<typeof characters>,
+  LegacyCharacterBibleColumn | 'selectedBibleVersionId'
+> &
+  Pick<CharacterBible, 'name'> &
+  Partial<Omit<CharacterBible, 'name'>>;
+
+export type CharacterMinimal = Pick<
+  CharacterWithSheet,
+  | 'id'
+  | 'characterId'
+  | 'name'
+  | 'sheetImageUrl'
+  | 'sheetStatus'
+  | 'sheetInputHash'
+  | 'selectedSheetVersionId'
+  | 'physicalDescription'
+  | 'voiceOnly'
+  | 'isPerson'
+  | 'consistencyTag'
+> & {
+  /** Designed ElevenLabs voice, when the row has one (#1554). */
+  voiceId?: string | null;
+};
+
+// Composite types for API responses
+export type CharacterWithTalent = CharacterWithSheet & {
+  talent: {
+    id: string;
+    name: string;
+    imageUrl: string | null;
+  } | null;
+};

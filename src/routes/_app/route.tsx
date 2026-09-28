@@ -1,9 +1,10 @@
-import { AppLayout } from '@/components/layout/app-layout';
-import { RouteErrorFallback } from '@/components/error/route-error-fallback';
+import { AppLayout } from '@/ui/layout/app-layout';
+import { RouteErrorFallback } from '@/ui/error/route-error-fallback';
 import { createFileRoute, Outlet } from '@tanstack/react-router';
 import { redirect } from '@tanstack/react-router';
-import { sessionQueryOptions } from '@/lib/auth/session-query';
-import { viaAvailabilityQueryOptions } from '@/hooks/use-via-availability';
+import { sessionQueryOptions } from '@/platform/ui/auth/session-query';
+import { viaAvailabilityQueryOptions } from '@/models/ui/use-via-availability';
+import { billingBalanceQueryOptions } from '@/billing/ui/use-billing-balance';
 
 export const Route = createFileRoute('/_app')({
   component: ProtectedLayout,
@@ -29,10 +30,17 @@ export const Route = createFileRoute('/_app')({
     // a team, and the hook's conservative fallback is the right answer for
     // them. Never fatal: a failure here must not take down the app shell over
     // an advisory capability hint.
+    // The balance seed lets the credit pill paint its balance on first
+    // render instead of after a client fetch.
     if (session) {
-      await queryClient
-        .ensureQueryData(viaAvailabilityQueryOptions)
-        .catch(() => undefined);
+      await Promise.all([
+        queryClient
+          .ensureQueryData(viaAvailabilityQueryOptions)
+          .catch(() => undefined),
+        queryClient
+          .ensureQueryData(billingBalanceQueryOptions)
+          .catch(() => undefined),
+      ]);
     }
 
     // Route context is the Start/Better Auth pattern; the RQ seed above

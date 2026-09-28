@@ -5,14 +5,14 @@ service that stitches a sequence's scene videos and mixes music + dialogue into
 one MP4, using [`mediabunny`](https://mediabunny.dev) +
 [`@mediabunny/server`](https://www.npmjs.com/package/@mediabunny/server)
 (NodeAV / FFmpeg). It runs as a **Cloudflare Container** fronted by the
-`VideoExportContainer` Durable Object (`src/lib/containers/video-export-container.ts`).
+`VideoExportContainer` Durable Object (`src/sequences/server/video-export-container.ts`).
 
 ## Why a container (and not the Worker)
 
-The browser export (`src/lib/sequence-player/export.ts`) relies on WebCodecs +
-Web Audio, which Cloudflare Workers don't provide. `@mediabunny/server`
-polyfills the full pipeline via NodeAV (native FFmpeg bindings) — that needs a
-real Node runtime, hence a container. See CLAUDE.md → "Server-side export".
+WebCodecs and Web Audio don't exist on Workers. `@mediabunny/server` polyfills
+the pipeline via NodeAV (native FFmpeg bindings) — that needs a real Node
+runtime, hence a container. Production and PR previews run `standard-4`.
+See `docs/architecture/public-api-internals.md`.
 
 ## Contract
 
@@ -34,13 +34,13 @@ header (URI-encoded JSON `{ durationSeconds, reEncoded, resolutionsLabel }`).
 `SequenceExportWorkflow` does all DB access, resolves absolute media URLs, calls
 this service, and streams the result into R2.
 
-### v1 scope
+### Scope
 
 Concatenates **transmux-compatible** scenes (every scene AVC with a
-byte-identical decoder config — the common single-model sequence) and mixes
-audio. Mixed-codec / mixed-resolution sequences are rejected with a clear error
-(the browser export still handles those client-side); server-side
-decode→resize→re-encode is a follow-up.
+byte-identical decoder config) and mixes audio. Mixed-codec / mixed-resolution
+sequences are decoded, letterboxed into the bounding box (`fit: 'contain'`),
+and re-encoded as one AVC track. Production and PR previews run this on a
+`standard-4` container (4 vCPU / 12 GiB).
 
 ## Deploy
 
@@ -70,9 +70,14 @@ curl -sX POST http://localhost:8080/export -H 'content-type: application/json' \
 **`bun dev:all`** starts this service with the app + Stripe listener AND sets
 `VIDEO_EXPORT_DEV_URL=http://localhost:8080` for the worker, so the app's export
 workflow POSTs here instead of the (production-only) container binding — a full
-local export loop with zero config. If instead you run `bun dev` + `bun dev:bunny`
-in separate terminals, set `VIDEO_EXPORT_DEV_URL=http://localhost:8080` in
-`.env.local` yourself to wire the app to it.
+local export loop with zero config. It also sets
+`VIDEO_EXPORT_DEV_MEDIA_ORIGIN=http://localhost:$PORT`, so this service fetches
+clips from the app directly rather than through `VITE_APP_URL` (the dev tunnel,
+which answers 530 when it is not connected). The service always listens on
+8080; it does not take the app's `PORT`. If instead you run `bun dev` +
+`bun dev:bunny` in separate terminals, set `VIDEO_EXPORT_DEV_URL=http://localhost:8080`
+(and, with a tunnel, `VIDEO_EXPORT_DEV_MEDIA_ORIGIN=http://localhost:<app port>`)
+in `.env.local` yourself.
 
 ## Build / smoke test the image (Docker)
 

@@ -8,9 +8,19 @@
  *   recorded fixtures under `fixtures/recorded/openrouter/<stage>/`.
  * - fal.ai: aimock's built-in `/fal/*` dispatcher (server.js dispatch at
  *   `FAL_PREFIX_RE`) reads the `x-fal-target-host` header that
- *   `src/lib/ai/fal-config.ts` already stamps on fal requests, and matches
+ *   `src/models/server/fal-config.ts` already stamps on fal requests, and matches
  *   against recorded fixtures under `fixtures/recorded/fal/`. No `mount()`
  *   needed — the library handles it.
+ *
+ * Native ElevenLabs TTS, Music and Voice Design are built into aimock
+ * (`POST /v1/text-to-speech/{id}`, `POST /v1/music`, `POST
+ * /v1/text-to-voice/design`, `POST /v1/text-to-voice`, `GET`/`DELETE
+ * /v1/voices/{id}` — the last four since aimock 1.43, CopilotKit/aimock#454).
+ * Playwright points `ELEVENLABS_BASE_URL` at this host (no `/v1` suffix — the
+ * SDK paths include it). Fixtures live under `fixtures/recorded/elevenlabs/`.
+ * Voice Design has no recorded fixtures yet: nothing in the suite turns
+ * `generateVoices` on, and a design/TTS tape has to be recorded against a real
+ * key (aimock synthesises a voice only in LENIENT mode, and replay is strict).
  *
  * Browser-side mocks (R2, QStash) remain in handlers.ts via Playwright routes.
  */
@@ -22,6 +32,7 @@ import {
   type ChatCompletionRequest,
   type Fixture,
   type JournalEntry,
+  type Mountable,
 } from '@copilotkit/aimock';
 import { createHash } from 'node:crypto';
 import {
@@ -46,10 +57,24 @@ const FAL_FIXTURE_DIR = resolve(
   import.meta.dirname,
   '../fixtures/recorded/fal'
 );
+// Native xAI gets its own aimock: the images / Responses handlers proxy to
+// the `openai` upstream, which on :4010 is OpenRouter. The worker reaches it
+// via XAI_BASE_URL (playwright.config.ts) — path shapes are OpenAI's, so no
+// request transform is needed, and the recorder writes flat into this dir.
+const XAI_AIMOCK_PORT = 4011;
+const XAI_FIXTURE_DIR = resolve(
+  import.meta.dirname,
+  '../fixtures/recorded/xai'
+);
+const ELEVENLABS_FIXTURE_DIR = resolve(
+  import.meta.dirname,
+  '../fixtures/recorded/elevenlabs'
+);
 // aimock's recorder writes flat into a single directory; we point it here and
 // `sortStagingFixtures()` (run on shutdown) classifies each new file by its
-// provider-key prefix (`openai-…` vs `fal-…`) and moves it into the right
-// sibling subfolder of `fixtures/recorded/` (`openrouter/<stage>/` or `fal/`).
+// provider-key prefix (`openai-…` vs `fal-…` vs `elevenlabs-…`) and moves it
+// into the right sibling subfolder of `fixtures/recorded/` (`openrouter/<stage>/`,
+// `fal/`, or `elevenlabs/`).
 const RECORD_STAGING_DIR = resolve(
   import.meta.dirname,
   '../fixtures/recorded/_unsorted'
@@ -61,9 +86,12 @@ const RECORD_STAGING_DIR = resolve(
 // family — otherwise its recordings get stuck in `_unsorted/` with a warning.
 const STAGE_PREFIXES: ReadonlyArray<readonly [string, string]> = [
   ['Enhance the script inside <USER_SCRIPT>', 'script-enhance'],
+  // The duration-fix retry turn of the same call (enhance-duration.ts).
+  ['Your clip duration labels sum to', 'script-enhance'],
   ['STYLE CATALOG (choose by index):', 'style-recommend'],
   ['Split the script within the USER_SCRIPT', 'script-analyze'],
   ['Extract a complete character bible', 'script-bibles'],
+  ['Cover each scene.', 'script-shot-list'],
   ['Match the following library locations', 'location-match'],
   ['Cast the following talent', 'talent-cast'],
   ['Generate the visual prompt for the starting frame', 'visual-prompts'],
@@ -297,17 +325,21 @@ function tolerantUserMessageRegex(userMessage: string): RegExp {
         : '[0-9A-HJKMNP-TV-Z]{26}';
     })
     .join('');
-  return new RegExp(pattern);
+  // Anchored: a fixture must match the WHOLE prompt. Unanchored, a prompt
+  // that is a prefix of another (the untagged talent-vision prompt vs. its
+  // `Uploaded filename:` variants) answered for both, first file wins.
+  return new RegExp(`^${pattern}$`);
 }
 
 // The OpenRouter fixtures were recorded when DEFAULT_ANALYSIS_MODEL was Opus 5
 // (#1367 Fable 5, then Luna). They are replay stubs, not quality samples, so
-// in replay they also answer for the current default rather than forcing a
-// full re-record (every fal fixture downstream is keyed on the LLM output).
+// in replay they also answer for Opus 5.5 scene splitting and the current
+// default rather than forcing a full re-record (every fal fixture downstream
+// is keyed on the LLM output).
 // Recording mode keeps the exact model so a re-record captures Luna.
 const FIXTURE_MODEL_ALIASES: Record<string, RegExp> = {
   'anthropic/claude-opus-5':
-    /^(anthropic\/claude-(opus|fable)-5|openai\/gpt-5\.6-luna)$/,
+    /^(anthropic\/claude-(opus-5(?:\.5)?|fable-5)|openai\/gpt-5\.6-luna)$/,
 };
 
 function tolerateRuntimeIds(fixtures: Fixture[]): Fixture[] {
@@ -328,7 +360,111 @@ function tolerateRuntimeIds(fixtures: Fixture[]): Fixture[] {
   return fixtures;
 }
 
+/**
+ * xAI's `/v1/images/edits` takes `application/json` (the Grok adapter posts
+ * `{ model, prompt, image | images }`), but aimock's built-in edits handler
+ * only parses OpenAI's multipart form and 400s a JSON body with
+ * "Missing required parameter: 'prompt'" — the character-sheet step that
+ * hands Grok Imagine a reference still hit exactly that. This mount sits in
+ * front of the built-in route and takes JSON only:
+ *
+ * - replay: re-wrap prompt + model as multipart and loop back into the same
+ *   server, so aimock's own matcher, journal and STRICT abort still apply
+ *   (the mount returns false for multipart, which is what lets the loopback
+ *   reach the built-in handler);
+ * - record: aimock would forward that multipart to xAI, which rejects it, so
+ *   post the JSON upstream ourselves and write the fixture in the same
+ *   `{ match: { endpoint: 'image' }, response: { image } }` shape the
+ *   recorder uses for generations.
+ */
+function xaiJsonImageEditsMount(): Mountable {
+  return {
+    async handleRequest(req, res) {
+      if (
+        req.method !== 'POST' ||
+        !req.headers['content-type']?.includes('application/json')
+      ) {
+        return false;
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      const raw = Buffer.concat(chunks);
+      const body: { model: string; prompt: string } = JSON.parse(
+        raw.toString('utf8')
+      );
+
+      let upstream: Response;
+      if (E2E_RECORDING) {
+        upstream = await fetch('https://api.x.ai/v1/images/edits', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: req.headers.authorization ?? '',
+          },
+          body: raw,
+        });
+        if (upstream.ok) {
+          const json: { data?: Array<{ url?: string; b64_json?: string }> } =
+            await upstream.clone().json();
+          const image = json.data?.[0];
+          if (image) {
+            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const hash = createHash('sha256')
+              .update(body.prompt)
+              .digest('hex')
+              .slice(0, 8);
+            mkdirSync(XAI_FIXTURE_DIR, { recursive: true });
+            writeFileSync(
+              resolve(XAI_FIXTURE_DIR, `openai-${stamp}-${hash}.json`),
+              JSON.stringify(
+                {
+                  fixtures: [
+                    {
+                      match: {
+                        endpoint: 'image',
+                        userMessage: body.prompt,
+                        model: body.model,
+                      },
+                      response: { image },
+                    },
+                  ],
+                },
+                null,
+                2
+              )
+            );
+          }
+        }
+      } else {
+        // Hand-built multipart: the web FormData serializer rewrites every \n
+        // in a field value as \r\n, and the recorded prompt has bare \n — the
+        // matcher compares them byte for byte.
+        const boundary = `----xai-edits-${Date.now()}`;
+        const part = (name: string, value: string) =>
+          `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`;
+        upstream = await fetch(
+          `http://127.0.0.1:${XAI_AIMOCK_PORT}/v1/images/edits`,
+          {
+            method: 'POST',
+            headers: {
+              'content-type': `multipart/form-data; boundary=${boundary}`,
+            },
+            body: `${part('prompt', body.prompt)}${part('model', body.model)}--${boundary}--\r\n`,
+          }
+        );
+      }
+      res.writeHead(upstream.status, {
+        'content-type':
+          upstream.headers.get('content-type') ?? 'application/json',
+      });
+      res.end(Buffer.from(await upstream.arrayBuffer()));
+      return true;
+    },
+  };
+}
+
 let mockServer: LLMock | null = null;
+let xaiMockServer: LLMock | null = null;
 
 export async function startAimockServer(): Promise<string> {
   mockServer = new LLMock({
@@ -361,7 +497,10 @@ export async function startAimockServer(): Promise<string> {
     // stage subfolders post-run so they don't pollute the curated layout.
     ...(E2E_RECORDING && {
       record: {
-        providers: { openai: 'https://openrouter.ai/api/v1' },
+        providers: {
+          openai: 'https://openrouter.ai/api/v1',
+          elevenlabs: 'https://api.elevenlabs.io',
+        },
         fixturePath: RECORD_STAGING_DIR,
         // Reasoning models (e.g. Grok 4.5 + structured output under concurrent
         // load) routinely leave 30s+ gaps between SSE chunks while thinking,
@@ -398,11 +537,45 @@ export async function startAimockServer(): Promise<string> {
     mockServer.addFixtures(loadFixturesRecursive(FAL_FIXTURE_DIR));
   }
 
+  // Native ElevenLabs TTS (`POST /v1/text-to-speech/{voice_id}`), Music
+  // (`POST /v1/music`) and Voice Design (`/v1/text-to-voice/*`,
+  // `/v1/voices/{id}`). aimock dispatches all of them on the same server as
+  // OpenRouter/fal — the paths do not collide.
+  if (existsSync(ELEVENLABS_FIXTURE_DIR)) {
+    mockServer.addFixtures(loadFixturesRecursive(ELEVENLABS_FIXTURE_DIR));
+  }
+
   const url = await mockServer.start();
   // Replay only: a STRICT 503 is otherwise retried by workflows, so the
   // spec keeps running. Kill Playwright on the first miss instead.
   if (!E2E_RECORDING) abortPlaywrightOnStrictMiss(mockServer);
   console.log(`[e2e] aimock server started at ${url}`);
+
+  xaiMockServer = new LLMock({
+    port: XAI_AIMOCK_PORT,
+    strict: !E2E_RECORDING,
+    logLevel: 'info',
+    replaySpeed: Number(process.env.AIMOCK_REPLAY_SPEED ?? 100),
+    ...(E2E_RECORDING && {
+      record: {
+        // Chat (Responses) + images go through the generic `openai` proxy;
+        // /v1/videos/* has its own handler keyed on `grok`.
+        providers: { openai: 'https://api.x.ai', grok: 'https://api.x.ai' },
+        fixturePath: XAI_FIXTURE_DIR,
+        // Grok Imagine's image endpoint is synchronous: it answers only once
+        // the still is rendered, which under a concurrent fan-out runs past
+        // aimock's 30s default deadline for response HEADERS.
+        upstreamTimeoutMs: 180_000,
+        bodyTimeoutMs: 120_000,
+      },
+    }),
+  }).mount('/v1/images/edits', xaiJsonImageEditsMount());
+  if (existsSync(XAI_FIXTURE_DIR)) {
+    xaiMockServer.addFixtures(loadFixturesRecursive(XAI_FIXTURE_DIR));
+  }
+  const xaiUrl = await xaiMockServer.start();
+  if (!E2E_RECORDING) abortPlaywrightOnStrictMiss(xaiMockServer);
+  console.log(`[e2e] aimock xAI server started at ${xaiUrl}`);
   return url;
 }
 
@@ -453,6 +626,14 @@ function abortPlaywrightOnStrictMiss(server: LLMock): void {
 }
 
 export async function stopAimockServer(): Promise<void> {
+  if (xaiMockServer) {
+    try {
+      await xaiMockServer.stop();
+    } catch {
+      // Ignore stop errors — the server may never have started.
+    }
+    xaiMockServer = null;
+  }
   if (!mockServer) return;
   dumpUnmatchedRequests(mockServer);
   if (E2E_RECORDING) sortStagingFixtures();
@@ -532,7 +713,7 @@ function fixtureContentHash(userMessage: string): string {
 // can't get a hash-free name because nothing in its body is a stable key.
 function stableBaseName(
   userMessage: string,
-  kind: 'openrouter' | 'fal'
+  kind: 'openrouter' | 'fal' | 'elevenlabs'
 ): string {
   const sceneId = /\bscene_(\d+)\b/.exec(userMessage)?.[0];
 
@@ -542,8 +723,8 @@ function stableBaseName(
     return sceneId ?? '';
   }
 
-  // fal: lead with the scene id when present, then a slug of the first line of
-  // the prompt, then a short content hash to disambiguate + track input drift.
+  // fal / elevenlabs: lead with the scene id when present, then a slug of the
+  // first line of the prompt, then a short content hash to disambiguate.
   const firstLine = userMessage.split('\n', 1)[0] ?? '';
   const lead = slugify(firstLine);
   const hash = fixtureContentHash(userMessage);
@@ -654,6 +835,12 @@ function sortStagingFixtures(): void {
       continue;
     }
     const userMessage = readUserMessage(src);
+    if (name.startsWith('elevenlabs-')) {
+      const base = stableBaseName(userMessage, 'elevenlabs');
+      moveToStableName(src, ELEVENLABS_FIXTURE_DIR, base, userMessage);
+      sorted++;
+      continue;
+    }
     if (name.startsWith('fal-')) {
       const modelSlug = classifyFalModel(src);
       const destDir = modelSlug

@@ -7,13 +7,18 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   fillScriptEditor,
+  openComposerReference,
   waitForLibraryPageLoad,
   waitForUploadComplete,
 } from './test-utils';
 
-export const TEST_IMAGE_JPEG = readFileSync(
-  path.join(import.meta.dirname, 'test-image.jpg')
-);
+// Named uploads send the REAL bytes of that fixture file (`test-image.jpg` is a
+// photo, `character-sheet.jpg` a stylised robot sheet, `creature.jpg` a forest
+// spirit), so the recorded vision answers are what the model actually said
+// about each image — not one photo relabelled three ways.
+function fixtureImage(filename: string): Buffer {
+  return readFileSync(path.join(import.meta.dirname, filename));
+}
 
 export function uniqueTalentName(label: string): string {
   return `E2E ${label} ${crypto.randomUUID().slice(0, 8)}`;
@@ -46,7 +51,7 @@ export async function openAddTalentFromSequence(page: Page): Promise<{
     page,
     'INT. STUDIO - DAY\n\nA person looks at the camera.'
   );
-  await page.locator('main').getByRole('button', { name: 'Talent' }).click();
+  await openComposerReference(page, 'Talent');
   // DialogTitle is not always the accessible name; match on the heading copy.
   const picker = page
     .getByRole('dialog')
@@ -69,7 +74,7 @@ export async function uploadNamedTalentImage(
   await fileChooser.setFiles({
     name: filename,
     mimeType: 'image/jpeg',
-    buffer: TEST_IMAGE_JPEG,
+    buffer: fixtureImage(filename),
   });
   await waitForUploadComplete(page);
 }
@@ -87,7 +92,7 @@ export async function dropNamedTalentImage(
       dt.items.add(new File([bytes], name, { type: 'image/jpeg' }));
       return dt;
     },
-    { b64: TEST_IMAGE_JPEG.toString('base64'), name: filename }
+    { b64: fixtureImage(filename).toString('base64'), name: filename }
   );
   await addTalentDialog(page)
     .getByText('Drag & drop or paste')
@@ -95,14 +100,15 @@ export async function dropNamedTalentImage(
   await waitForUploadComplete(page);
 }
 
+// The classifier's verdict, shown read-only (#1581): the server derives
+// isHuman from the likeness ledger, so there is nothing to toggle.
 export async function waitForSubjectKind(
   page: Page,
   kind: 'Human' | 'Animated' | 'Other'
 ): Promise<Locator> {
-  const radio = addTalentDialog(page).getByRole('radio', { name: kind });
-  await expect(radio).toBeVisible({ timeout: 15_000 });
-  await expect(radio).toBeChecked();
-  return radio;
+  const badge = addTalentDialog(page).getByTestId('subject-kind');
+  await expect(badge).toHaveText(kind, { timeout: 15_000 });
+  return badge;
 }
 
 export async function attestPortraitRights(page: Page): Promise<void> {
@@ -113,12 +119,6 @@ export async function attestPortraitRights(page: Page): Promise<void> {
   await dialog
     .getByLabel('Basis for authorization')
     .fill('E2E fixture image — synthetic, depicts no real person');
-}
-
-export async function attestAssetRights(page: Page): Promise<void> {
-  await addTalentDialog(page)
-    .getByRole('checkbox', { name: /hold the rights to this asset/i })
-    .check();
 }
 
 export async function submitAddTalent(page: Page): Promise<void> {

@@ -13,6 +13,7 @@ import { Route as AppRouteRouteImport } from './routes/_app/route'
 import { Route as AuthRouteRouteImport } from './routes/_auth/route'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as LlmsDottxtRouteImport } from './routes/llms[.]txt'
+import { Route as McpRouteImport } from './routes/mcp'
 import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
 import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as DotwellKnownSplatRouteImport } from './routes/[.]well-known/$'
@@ -31,6 +32,7 @@ import { Route as ApiRealtimeRouteImport } from './routes/api/realtime'
 import { Route as ApiTestRouteRouteImport } from './routes/api/test/route'
 import { Route as DocsIndexRouteImport } from './routes/docs/index'
 import { Route as DocsSplatRouteImport } from './routes/docs/$'
+import { Route as DocsDependencyGraphRouteImport } from './routes/docs/dependency-graph'
 import { Route as DocsFaqRouteImport } from './routes/docs/faq'
 import { Route as DocsLlmsDotmdRouteImport } from './routes/docs/llms[.]md'
 import { Route as GiftCodeRouteImport } from './routes/gift/$code'
@@ -51,7 +53,6 @@ import { Route as AppModelsSplatRouteImport } from './routes/_app/models/$'
 import { Route as AppOauthConsentRouteImport } from './routes/_app/oauth/consent'
 import { Route as AppSequencesIndexRouteImport } from './routes/_app/sequences/index'
 import { Route as AppSequencesIdRouteRouteImport } from './routes/_app/sequences/$id/route'
-import { Route as AppSequencesNewRouteImport } from './routes/_app/sequences/new'
 import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings/index'
 import { Route as AppSettingsApiKeysRouteImport } from './routes/_app/settings/api-keys'
 import { Route as AppSettingsDeveloperRouteImport } from './routes/_app/settings/developer'
@@ -63,12 +64,10 @@ import { Route as AppTalentIdRouteImport } from './routes/_app/talent/$id'
 import { Route as AppVideosIndexRouteImport } from './routes/_app/videos/index'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiBillingWebhookRouteImport } from './routes/api/billing/webhook'
-import { Route as ApiDevMemoryRouteImport } from './routes/api/dev/memory'
 import { Route as ApiOpenrouterCallbackRouteImport } from './routes/api/openrouter/callback'
 import { Route as ApiStorageMultipartRouteImport } from './routes/api/storage/multipart'
 import { Route as ApiStorageUploadRouteImport } from './routes/api/storage/upload'
 import { Route as ApiTestCharacterRouteImport } from './routes/api/test/character'
-import { Route as ApiTestCleanupRouteImport } from './routes/api/test/cleanup'
 import { Route as ApiTestImageRouteImport } from './routes/api/test/image'
 import { Route as ApiTestLocationRouteImport } from './routes/api/test/location'
 import { Route as ApiTestSequenceRouteImport } from './routes/api/test/sequence'
@@ -86,6 +85,8 @@ import { Route as AppSequencesIdMusicRouteImport } from './routes/_app/sequences
 import { Route as AppSequencesIdScenesRouteImport } from './routes/_app/sequences/$id/scenes'
 import { Route as AppSequencesIdScriptRouteImport } from './routes/_app/sequences/$id/script'
 import { Route as AppSequencesIdTheatreRouteImport } from './routes/_app/sequences/$id/theatre'
+import { Route as AppSequencesNewIndexRouteImport } from './routes/_app/sequences/new/index'
+import { Route as AppSequencesNewScenesRouteImport } from './routes/_app/sequences/new/scenes'
 import { Route as ApiV1DeviceCodeRouteImport } from './routes/api/v1/device.code'
 import { Route as ApiV1DeviceTokenRouteImport } from './routes/api/v1/device.token'
 import { Route as ApiV1ScriptsEnhanceRouteImport } from './routes/api/v1/scripts.enhance'
@@ -115,6 +116,11 @@ const DocsRoute = DocsRouteImport.update({
 const LlmsDottxtRoute = LlmsDottxtRouteImport.update({
   id: '/llms.txt',
   path: '/llms.txt',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const McpRoute = McpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RobotsDottxtRoute = RobotsDottxtRouteImport.update({
@@ -205,6 +211,11 @@ const DocsIndexRoute = DocsIndexRouteImport.update({
 const DocsSplatRoute = DocsSplatRouteImport.update({
   id: '/$',
   path: '/$',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsDependencyGraphRoute = DocsDependencyGraphRouteImport.update({
+  id: '/dependency-graph',
+  path: '/dependency-graph',
   getParentRoute: () => DocsRoute,
 } as any)
 const DocsFaqRoute = DocsFaqRouteImport.update({
@@ -307,11 +318,6 @@ const AppSequencesIdRouteRoute = AppSequencesIdRouteRouteImport.update({
   path: '/sequences/$id',
   getParentRoute: () => AppRouteRoute,
 } as any)
-const AppSequencesNewRoute = AppSequencesNewRouteImport.update({
-  id: '/sequences/new',
-  path: '/sequences/new',
-  getParentRoute: () => AppRouteRoute,
-} as any)
 const AppSettingsIndexRoute = AppSettingsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -367,11 +373,6 @@ const ApiBillingWebhookRoute = ApiBillingWebhookRouteImport.update({
   path: '/api/billing/webhook',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiDevMemoryRoute = ApiDevMemoryRouteImport.update({
-  id: '/api/dev/memory',
-  path: '/api/dev/memory',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiOpenrouterCallbackRoute = ApiOpenrouterCallbackRouteImport.update({
   id: '/api/openrouter/callback',
   path: '/api/openrouter/callback',
@@ -390,11 +391,6 @@ const ApiStorageUploadRoute = ApiStorageUploadRouteImport.update({
 const ApiTestCharacterRoute = ApiTestCharacterRouteImport.update({
   id: '/character',
   path: '/character',
-  getParentRoute: () => ApiTestRouteRoute,
-} as any)
-const ApiTestCleanupRoute = ApiTestCleanupRouteImport.update({
-  id: '/cleanup',
-  path: '/cleanup',
   getParentRoute: () => ApiTestRouteRoute,
 } as any)
 const ApiTestImageRoute = ApiTestImageRouteImport.update({
@@ -482,6 +478,16 @@ const AppSequencesIdTheatreRoute = AppSequencesIdTheatreRouteImport.update({
   path: '/theatre',
   getParentRoute: () => AppSequencesIdRouteRoute,
 } as any)
+const AppSequencesNewIndexRoute = AppSequencesNewIndexRouteImport.update({
+  id: '/sequences/new/',
+  path: '/sequences/new/',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppSequencesNewScenesRoute = AppSequencesNewScenesRouteImport.update({
+  id: '/sequences/new/scenes',
+  path: '/sequences/new/scenes',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const ApiV1DeviceCodeRoute = ApiV1DeviceCodeRouteImport.update({
   id: '/api/v1/device/code',
   path: '/api/v1/device/code',
@@ -552,6 +558,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/docs': typeof DocsRouteWithChildren
   '/llms.txt': typeof LlmsDottxtRoute
+  '/mcp': typeof McpRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/admin': typeof AppAdminRouteRouteWithChildren
@@ -568,6 +575,7 @@ export interface FileRoutesByFullPath {
   '/verify': typeof AuthVerifyRoute
   '/api/realtime': typeof ApiRealtimeRoute
   '/docs/$': typeof DocsSplatRoute
+  '/docs/dependency-graph': typeof DocsDependencyGraphRoute
   '/docs/faq': typeof DocsFaqRoute
   '/docs/llms.md': typeof DocsLlmsDotmdRoute
   '/gift/$code': typeof GiftCodeRoute
@@ -584,19 +592,16 @@ export interface FileRoutesByFullPath {
   '/locations/$locationId': typeof AppLocationsLocationIdRoute
   '/models/$': typeof AppModelsSplatRoute
   '/oauth/consent': typeof AppOauthConsentRoute
-  '/sequences/new': typeof AppSequencesNewRoute
   '/settings/api-keys': typeof AppSettingsApiKeysRoute
   '/settings/developer': typeof AppSettingsDeveloperRoute
   '/settings/passkeys': typeof AppSettingsPasskeysRoute
   '/talent/$id': typeof AppTalentIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/billing/webhook': typeof ApiBillingWebhookRoute
-  '/api/dev/memory': typeof ApiDevMemoryRoute
   '/api/openrouter/callback': typeof ApiOpenrouterCallbackRoute
   '/api/storage/multipart': typeof ApiStorageMultipartRoute
   '/api/storage/upload': typeof ApiStorageUploadRoute
   '/api/test/character': typeof ApiTestCharacterRoute
-  '/api/test/cleanup': typeof ApiTestCleanupRoute
   '/api/test/image': typeof ApiTestImageRoute
   '/api/test/location': typeof ApiTestLocationRoute
   '/api/test/sequence': typeof ApiTestSequenceRoute
@@ -624,11 +629,13 @@ export interface FileRoutesByFullPath {
   '/sequences/$id/scenes': typeof AppSequencesIdScenesRoute
   '/sequences/$id/script': typeof AppSequencesIdScriptRoute
   '/sequences/$id/theatre': typeof AppSequencesIdTheatreRoute
+  '/sequences/new/scenes': typeof AppSequencesNewScenesRoute
   '/api/v1/device/code': typeof ApiV1DeviceCodeRoute
   '/api/v1/device/token': typeof ApiV1DeviceTokenRoute
   '/api/v1/scripts/enhance': typeof ApiV1ScriptsEnhanceRoute
   '/api/v1/sequences/$id': typeof ApiV1SequencesIdRouteWithChildren
   '/api/v1/styles/$id': typeof ApiV1StylesIdRoute
+  '/sequences/new/': typeof AppSequencesNewIndexRoute
   '/sequences/$id/cast/$characterId': typeof AppSequencesIdCastCharacterIdRoute
   '/sequences/$id/elements/$elementId': typeof AppSequencesIdElementsElementIdRoute
   '/sequences/$id/locations/$locationId': typeof AppSequencesIdLocationsLocationIdRoute
@@ -640,6 +647,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof AppIndexRoute
   '/llms.txt': typeof LlmsDottxtRoute
+  '/mcp': typeof McpRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/admin': typeof AppAdminRouteRouteWithChildren
@@ -655,6 +663,7 @@ export interface FileRoutesByTo {
   '/verify': typeof AuthVerifyRoute
   '/api/realtime': typeof ApiRealtimeRoute
   '/docs/$': typeof DocsSplatRoute
+  '/docs/dependency-graph': typeof DocsDependencyGraphRoute
   '/docs/faq': typeof DocsFaqRoute
   '/docs/llms.md': typeof DocsLlmsDotmdRoute
   '/gift/$code': typeof GiftCodeRoute
@@ -671,19 +680,16 @@ export interface FileRoutesByTo {
   '/locations/$locationId': typeof AppLocationsLocationIdRoute
   '/models/$': typeof AppModelsSplatRoute
   '/oauth/consent': typeof AppOauthConsentRoute
-  '/sequences/new': typeof AppSequencesNewRoute
   '/settings/api-keys': typeof AppSettingsApiKeysRoute
   '/settings/developer': typeof AppSettingsDeveloperRoute
   '/settings/passkeys': typeof AppSettingsPasskeysRoute
   '/talent/$id': typeof AppTalentIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/billing/webhook': typeof ApiBillingWebhookRoute
-  '/api/dev/memory': typeof ApiDevMemoryRoute
   '/api/openrouter/callback': typeof ApiOpenrouterCallbackRoute
   '/api/storage/multipart': typeof ApiStorageMultipartRoute
   '/api/storage/upload': typeof ApiStorageUploadRoute
   '/api/test/character': typeof ApiTestCharacterRoute
-  '/api/test/cleanup': typeof ApiTestCleanupRoute
   '/api/test/image': typeof ApiTestImageRoute
   '/api/test/location': typeof ApiTestLocationRoute
   '/api/test/sequence': typeof ApiTestSequenceRoute
@@ -711,11 +717,13 @@ export interface FileRoutesByTo {
   '/sequences/$id/scenes': typeof AppSequencesIdScenesRoute
   '/sequences/$id/script': typeof AppSequencesIdScriptRoute
   '/sequences/$id/theatre': typeof AppSequencesIdTheatreRoute
+  '/sequences/new/scenes': typeof AppSequencesNewScenesRoute
   '/api/v1/device/code': typeof ApiV1DeviceCodeRoute
   '/api/v1/device/token': typeof ApiV1DeviceTokenRoute
   '/api/v1/scripts/enhance': typeof ApiV1ScriptsEnhanceRoute
   '/api/v1/sequences/$id': typeof ApiV1SequencesIdRouteWithChildren
   '/api/v1/styles/$id': typeof ApiV1StylesIdRoute
+  '/sequences/new': typeof AppSequencesNewIndexRoute
   '/sequences/$id/cast/$characterId': typeof AppSequencesIdCastCharacterIdRoute
   '/sequences/$id/elements/$elementId': typeof AppSequencesIdElementsElementIdRoute
   '/sequences/$id/locations/$locationId': typeof AppSequencesIdLocationsLocationIdRoute
@@ -730,6 +738,7 @@ export interface FileRoutesById {
   '/_auth': typeof AuthRouteRouteWithChildren
   '/docs': typeof DocsRouteWithChildren
   '/llms.txt': typeof LlmsDottxtRoute
+  '/mcp': typeof McpRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
   '/_app/admin': typeof AppAdminRouteRouteWithChildren
@@ -746,6 +755,7 @@ export interface FileRoutesById {
   '/_auth/verify': typeof AuthVerifyRoute
   '/api/realtime': typeof ApiRealtimeRoute
   '/docs/$': typeof DocsSplatRoute
+  '/docs/dependency-graph': typeof DocsDependencyGraphRoute
   '/docs/faq': typeof DocsFaqRoute
   '/docs/llms.md': typeof DocsLlmsDotmdRoute
   '/gift/$code': typeof GiftCodeRoute
@@ -763,19 +773,16 @@ export interface FileRoutesById {
   '/_app/locations/$locationId': typeof AppLocationsLocationIdRoute
   '/_app/models/$': typeof AppModelsSplatRoute
   '/_app/oauth/consent': typeof AppOauthConsentRoute
-  '/_app/sequences/new': typeof AppSequencesNewRoute
   '/_app/settings/api-keys': typeof AppSettingsApiKeysRoute
   '/_app/settings/developer': typeof AppSettingsDeveloperRoute
   '/_app/settings/passkeys': typeof AppSettingsPasskeysRoute
   '/_app/talent/$id': typeof AppTalentIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/billing/webhook': typeof ApiBillingWebhookRoute
-  '/api/dev/memory': typeof ApiDevMemoryRoute
   '/api/openrouter/callback': typeof ApiOpenrouterCallbackRoute
   '/api/storage/multipart': typeof ApiStorageMultipartRoute
   '/api/storage/upload': typeof ApiStorageUploadRoute
   '/api/test/character': typeof ApiTestCharacterRoute
-  '/api/test/cleanup': typeof ApiTestCleanupRoute
   '/api/test/image': typeof ApiTestImageRoute
   '/api/test/location': typeof ApiTestLocationRoute
   '/api/test/sequence': typeof ApiTestSequenceRoute
@@ -803,11 +810,13 @@ export interface FileRoutesById {
   '/_app/sequences/$id/scenes': typeof AppSequencesIdScenesRoute
   '/_app/sequences/$id/script': typeof AppSequencesIdScriptRoute
   '/_app/sequences/$id/theatre': typeof AppSequencesIdTheatreRoute
+  '/_app/sequences/new/scenes': typeof AppSequencesNewScenesRoute
   '/api/v1/device/code': typeof ApiV1DeviceCodeRoute
   '/api/v1/device/token': typeof ApiV1DeviceTokenRoute
   '/api/v1/scripts/enhance': typeof ApiV1ScriptsEnhanceRoute
   '/api/v1/sequences/$id': typeof ApiV1SequencesIdRouteWithChildren
   '/api/v1/styles/$id': typeof ApiV1StylesIdRoute
+  '/_app/sequences/new/': typeof AppSequencesNewIndexRoute
   '/_app/sequences/$id/cast/$characterId': typeof AppSequencesIdCastCharacterIdRoute
   '/_app/sequences/$id/elements/$elementId': typeof AppSequencesIdElementsElementIdRoute
   '/_app/sequences/$id/locations/$locationId': typeof AppSequencesIdLocationsLocationIdRoute
@@ -822,6 +831,7 @@ export interface FileRouteTypes {
     | '/'
     | '/docs'
     | '/llms.txt'
+    | '/mcp'
     | '/robots.txt'
     | '/sitemap.xml'
     | '/admin'
@@ -838,6 +848,7 @@ export interface FileRouteTypes {
     | '/verify'
     | '/api/realtime'
     | '/docs/$'
+    | '/docs/dependency-graph'
     | '/docs/faq'
     | '/docs/llms.md'
     | '/gift/$code'
@@ -854,19 +865,16 @@ export interface FileRouteTypes {
     | '/locations/$locationId'
     | '/models/$'
     | '/oauth/consent'
-    | '/sequences/new'
     | '/settings/api-keys'
     | '/settings/developer'
     | '/settings/passkeys'
     | '/talent/$id'
     | '/api/auth/$'
     | '/api/billing/webhook'
-    | '/api/dev/memory'
     | '/api/openrouter/callback'
     | '/api/storage/multipart'
     | '/api/storage/upload'
     | '/api/test/character'
-    | '/api/test/cleanup'
     | '/api/test/image'
     | '/api/test/location'
     | '/api/test/sequence'
@@ -894,11 +902,13 @@ export interface FileRouteTypes {
     | '/sequences/$id/scenes'
     | '/sequences/$id/script'
     | '/sequences/$id/theatre'
+    | '/sequences/new/scenes'
     | '/api/v1/device/code'
     | '/api/v1/device/token'
     | '/api/v1/scripts/enhance'
     | '/api/v1/sequences/$id'
     | '/api/v1/styles/$id'
+    | '/sequences/new/'
     | '/sequences/$id/cast/$characterId'
     | '/sequences/$id/elements/$elementId'
     | '/sequences/$id/locations/$locationId'
@@ -910,6 +920,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/llms.txt'
+    | '/mcp'
     | '/robots.txt'
     | '/sitemap.xml'
     | '/admin'
@@ -925,6 +936,7 @@ export interface FileRouteTypes {
     | '/verify'
     | '/api/realtime'
     | '/docs/$'
+    | '/docs/dependency-graph'
     | '/docs/faq'
     | '/docs/llms.md'
     | '/gift/$code'
@@ -941,19 +953,16 @@ export interface FileRouteTypes {
     | '/locations/$locationId'
     | '/models/$'
     | '/oauth/consent'
-    | '/sequences/new'
     | '/settings/api-keys'
     | '/settings/developer'
     | '/settings/passkeys'
     | '/talent/$id'
     | '/api/auth/$'
     | '/api/billing/webhook'
-    | '/api/dev/memory'
     | '/api/openrouter/callback'
     | '/api/storage/multipart'
     | '/api/storage/upload'
     | '/api/test/character'
-    | '/api/test/cleanup'
     | '/api/test/image'
     | '/api/test/location'
     | '/api/test/sequence'
@@ -981,11 +990,13 @@ export interface FileRouteTypes {
     | '/sequences/$id/scenes'
     | '/sequences/$id/script'
     | '/sequences/$id/theatre'
+    | '/sequences/new/scenes'
     | '/api/v1/device/code'
     | '/api/v1/device/token'
     | '/api/v1/scripts/enhance'
     | '/api/v1/sequences/$id'
     | '/api/v1/styles/$id'
+    | '/sequences/new'
     | '/sequences/$id/cast/$characterId'
     | '/sequences/$id/elements/$elementId'
     | '/sequences/$id/locations/$locationId'
@@ -999,6 +1010,7 @@ export interface FileRouteTypes {
     | '/_auth'
     | '/docs'
     | '/llms.txt'
+    | '/mcp'
     | '/robots.txt'
     | '/sitemap.xml'
     | '/_app/admin'
@@ -1015,6 +1027,7 @@ export interface FileRouteTypes {
     | '/_auth/verify'
     | '/api/realtime'
     | '/docs/$'
+    | '/docs/dependency-graph'
     | '/docs/faq'
     | '/docs/llms.md'
     | '/gift/$code'
@@ -1032,19 +1045,16 @@ export interface FileRouteTypes {
     | '/_app/locations/$locationId'
     | '/_app/models/$'
     | '/_app/oauth/consent'
-    | '/_app/sequences/new'
     | '/_app/settings/api-keys'
     | '/_app/settings/developer'
     | '/_app/settings/passkeys'
     | '/_app/talent/$id'
     | '/api/auth/$'
     | '/api/billing/webhook'
-    | '/api/dev/memory'
     | '/api/openrouter/callback'
     | '/api/storage/multipart'
     | '/api/storage/upload'
     | '/api/test/character'
-    | '/api/test/cleanup'
     | '/api/test/image'
     | '/api/test/location'
     | '/api/test/sequence'
@@ -1072,11 +1082,13 @@ export interface FileRouteTypes {
     | '/_app/sequences/$id/scenes'
     | '/_app/sequences/$id/script'
     | '/_app/sequences/$id/theatre'
+    | '/_app/sequences/new/scenes'
     | '/api/v1/device/code'
     | '/api/v1/device/token'
     | '/api/v1/scripts/enhance'
     | '/api/v1/sequences/$id'
     | '/api/v1/styles/$id'
+    | '/_app/sequences/new/'
     | '/_app/sequences/$id/cast/$characterId'
     | '/_app/sequences/$id/elements/$elementId'
     | '/_app/sequences/$id/locations/$locationId'
@@ -1091,6 +1103,7 @@ export interface RootRouteChildren {
   AuthRouteRoute: typeof AuthRouteRouteWithChildren
   DocsRoute: typeof DocsRouteWithChildren
   LlmsDottxtRoute: typeof LlmsDottxtRoute
+  McpRoute: typeof McpRoute
   RobotsDottxtRoute: typeof RobotsDottxtRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   ApiTestRouteRoute: typeof ApiTestRouteRouteWithChildren
@@ -1105,7 +1118,6 @@ export interface RootRouteChildren {
   R2SplatRoute: typeof R2SplatRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiBillingWebhookRoute: typeof ApiBillingWebhookRoute
-  ApiDevMemoryRoute: typeof ApiDevMemoryRoute
   ApiOpenrouterCallbackRoute: typeof ApiOpenrouterCallbackRoute
   ApiStorageMultipartRoute: typeof ApiStorageMultipartRoute
   ApiStorageUploadRoute: typeof ApiStorageUploadRoute
@@ -1146,6 +1158,13 @@ declare module '@tanstack/react-router' {
       path: '/llms.txt'
       fullPath: '/llms.txt'
       preLoaderRoute: typeof LlmsDottxtRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mcp': {
+      id: '/mcp'
+      path: '/mcp'
+      fullPath: '/mcp'
+      preLoaderRoute: typeof McpRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/robots.txt': {
@@ -1272,6 +1291,13 @@ declare module '@tanstack/react-router' {
       path: '/$'
       fullPath: '/docs/$'
       preLoaderRoute: typeof DocsSplatRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/dependency-graph': {
+      id: '/docs/dependency-graph'
+      path: '/dependency-graph'
+      fullPath: '/docs/dependency-graph'
+      preLoaderRoute: typeof DocsDependencyGraphRouteImport
       parentRoute: typeof DocsRoute
     }
     '/docs/faq': {
@@ -1414,13 +1440,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSequencesIdRouteRouteImport
       parentRoute: typeof AppRouteRoute
     }
-    '/_app/sequences/new': {
-      id: '/_app/sequences/new'
-      path: '/sequences/new'
-      fullPath: '/sequences/new'
-      preLoaderRoute: typeof AppSequencesNewRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
     '/_app/settings/': {
       id: '/_app/settings/'
       path: '/'
@@ -1498,13 +1517,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiBillingWebhookRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/dev/memory': {
-      id: '/api/dev/memory'
-      path: '/api/dev/memory'
-      fullPath: '/api/dev/memory'
-      preLoaderRoute: typeof ApiDevMemoryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/openrouter/callback': {
       id: '/api/openrouter/callback'
       path: '/api/openrouter/callback'
@@ -1531,13 +1543,6 @@ declare module '@tanstack/react-router' {
       path: '/character'
       fullPath: '/api/test/character'
       preLoaderRoute: typeof ApiTestCharacterRouteImport
-      parentRoute: typeof ApiTestRouteRoute
-    }
-    '/api/test/cleanup': {
-      id: '/api/test/cleanup'
-      path: '/cleanup'
-      fullPath: '/api/test/cleanup'
-      preLoaderRoute: typeof ApiTestCleanupRouteImport
       parentRoute: typeof ApiTestRouteRoute
     }
     '/api/test/image': {
@@ -1658,6 +1663,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/sequences/$id/theatre'
       preLoaderRoute: typeof AppSequencesIdTheatreRouteImport
       parentRoute: typeof AppSequencesIdRouteRoute
+    }
+    '/_app/sequences/new/': {
+      id: '/_app/sequences/new/'
+      path: '/sequences/new'
+      fullPath: '/sequences/new/'
+      preLoaderRoute: typeof AppSequencesNewIndexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/sequences/new/scenes': {
+      id: '/_app/sequences/new/scenes'
+      path: '/sequences/new/scenes'
+      fullPath: '/sequences/new/scenes'
+      preLoaderRoute: typeof AppSequencesNewScenesRouteImport
+      parentRoute: typeof AppRouteRoute
     }
     '/api/v1/device/code': {
       id: '/api/v1/device/code'
@@ -1821,7 +1840,6 @@ interface AppRouteRouteChildren {
   AppLocationsLocationIdRoute: typeof AppLocationsLocationIdRoute
   AppModelsSplatRoute: typeof AppModelsSplatRoute
   AppOauthConsentRoute: typeof AppOauthConsentRoute
-  AppSequencesNewRoute: typeof AppSequencesNewRoute
   AppTalentIdRoute: typeof AppTalentIdRoute
   AppGalleryIndexRoute: typeof AppGalleryIndexRoute
   AppImagesIndexRoute: typeof AppImagesIndexRoute
@@ -1833,6 +1851,8 @@ interface AppRouteRouteChildren {
   AppTalentIndexRoute: typeof AppTalentIndexRoute
   AppVideosIndexRoute: typeof AppVideosIndexRoute
   AppModelsFamilySplatRoute: typeof AppModelsFamilySplatRoute
+  AppSequencesNewScenesRoute: typeof AppSequencesNewScenesRoute
+  AppSequencesNewIndexRoute: typeof AppSequencesNewIndexRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
@@ -1849,7 +1869,6 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppLocationsLocationIdRoute: AppLocationsLocationIdRoute,
   AppModelsSplatRoute: AppModelsSplatRoute,
   AppOauthConsentRoute: AppOauthConsentRoute,
-  AppSequencesNewRoute: AppSequencesNewRoute,
   AppTalentIdRoute: AppTalentIdRoute,
   AppGalleryIndexRoute: AppGalleryIndexRoute,
   AppImagesIndexRoute: AppImagesIndexRoute,
@@ -1861,6 +1880,8 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppTalentIndexRoute: AppTalentIndexRoute,
   AppVideosIndexRoute: AppVideosIndexRoute,
   AppModelsFamilySplatRoute: AppModelsFamilySplatRoute,
+  AppSequencesNewScenesRoute: AppSequencesNewScenesRoute,
+  AppSequencesNewIndexRoute: AppSequencesNewIndexRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(
@@ -1883,6 +1904,7 @@ const AuthRouteRouteWithChildren = AuthRouteRoute._addFileChildren(
 
 interface DocsRouteChildren {
   DocsSplatRoute: typeof DocsSplatRoute
+  DocsDependencyGraphRoute: typeof DocsDependencyGraphRoute
   DocsFaqRoute: typeof DocsFaqRoute
   DocsLlmsDotmdRoute: typeof DocsLlmsDotmdRoute
   DocsIndexRoute: typeof DocsIndexRoute
@@ -1890,6 +1912,7 @@ interface DocsRouteChildren {
 
 const DocsRouteChildren: DocsRouteChildren = {
   DocsSplatRoute: DocsSplatRoute,
+  DocsDependencyGraphRoute: DocsDependencyGraphRoute,
   DocsFaqRoute: DocsFaqRoute,
   DocsLlmsDotmdRoute: DocsLlmsDotmdRoute,
   DocsIndexRoute: DocsIndexRoute,
@@ -1899,7 +1922,6 @@ const DocsRouteWithChildren = DocsRoute._addFileChildren(DocsRouteChildren)
 
 interface ApiTestRouteRouteChildren {
   ApiTestCharacterRoute: typeof ApiTestCharacterRoute
-  ApiTestCleanupRoute: typeof ApiTestCleanupRoute
   ApiTestImageRoute: typeof ApiTestImageRoute
   ApiTestLocationRoute: typeof ApiTestLocationRoute
   ApiTestSequenceRoute: typeof ApiTestSequenceRoute
@@ -1912,7 +1934,6 @@ interface ApiTestRouteRouteChildren {
 
 const ApiTestRouteRouteChildren: ApiTestRouteRouteChildren = {
   ApiTestCharacterRoute: ApiTestCharacterRoute,
-  ApiTestCleanupRoute: ApiTestCleanupRoute,
   ApiTestImageRoute: ApiTestImageRoute,
   ApiTestLocationRoute: ApiTestLocationRoute,
   ApiTestSequenceRoute: ApiTestSequenceRoute,
@@ -1967,6 +1988,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRouteRoute: AuthRouteRouteWithChildren,
   DocsRoute: DocsRouteWithChildren,
   LlmsDottxtRoute: LlmsDottxtRoute,
+  McpRoute: McpRoute,
   RobotsDottxtRoute: RobotsDottxtRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   ApiTestRouteRoute: ApiTestRouteRouteWithChildren,
@@ -1981,7 +2003,6 @@ const rootRouteChildren: RootRouteChildren = {
   R2SplatRoute: R2SplatRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiBillingWebhookRoute: ApiBillingWebhookRoute,
-  ApiDevMemoryRoute: ApiDevMemoryRoute,
   ApiOpenrouterCallbackRoute: ApiOpenrouterCallbackRoute,
   ApiStorageMultipartRoute: ApiStorageMultipartRoute,
   ApiStorageUploadRoute: ApiStorageUploadRoute,

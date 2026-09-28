@@ -9,28 +9,29 @@
  * skeleton.
  */
 
-import { Button } from '@/components/ui/button';
+import { Button } from '@/ui/shadcn/button';
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
+} from '@/ui/shadcn/card';
 import {
   decideOAuthConsentFn,
   getOAuthConsentContextFn,
   type OAuthConsentContext,
-} from '@/functions/oauth-consent';
+} from '@/platform/oauth-consent.fn';
 import {
   consentPageHref,
   displayFieldsFromOAuthQuery,
   needsOAuthQueryPack,
   pickOAuthQuery,
   resolveOAuthQuery,
-} from '@/lib/auth/oauth-query-snapshot';
-import { requireSessionOrRedirect } from '@/lib/auth/route-guards';
-import { errorMessage } from '@/lib/errors';
+} from '@/platform/auth/oauth-query-snapshot';
+import { requireSessionOrRedirect } from '@/platform/ui/auth/route-guards';
+import { errorMessage } from '@/platform/errors';
+import { useHydrated } from '@/ui/use-hydrated';
 import { useMutation } from '@tanstack/react-query';
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { createIsomorphicFn } from '@tanstack/react-start';
@@ -134,11 +135,11 @@ function ConsentDecision({
   consent: OAuthConsentContext;
   oauthQuery: string;
 }) {
+  const hydrated = useHydrated();
   const [outcome, setOutcome] = useState<'granted' | 'denied' | null>(null);
 
   const decide = useMutation({
     // Suppress the global MutationCache toast — we render our own below.
-    meta: { inlineError: true },
     mutationFn: (accept: boolean) =>
       decideOAuthConsentFn({
         data: { accept, oauthQuery },
@@ -230,13 +231,16 @@ function ConsentDecision({
       <div className="flex justify-end gap-2">
         <Button
           variant="outline"
-          disabled={decide.isPending}
+          disabled={!hydrated || decide.isPending}
           onClick={() => decide.mutate(false)}
         >
           Deny
         </Button>
-        <Button disabled={decide.isPending} onClick={() => decide.mutate(true)}>
-          {decide.isPending ? 'Working…' : 'Approve'}
+        <Button
+          disabled={!hydrated || decide.isPending}
+          onClick={() => decide.mutate(true)}
+        >
+          {!hydrated ? 'Loading…' : decide.isPending ? 'Working…' : 'Approve'}
         </Button>
       </div>
     </div>

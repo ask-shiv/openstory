@@ -33,7 +33,7 @@ export default defineConfig({
 
   // Shared settings for all projects
   use: {
-    baseURL: 'http://localhost:3001',
+    baseURL: 'http://localhost:3020',
     viewport: { width: 1920, height: 1080 },
     trace: process.env.CI ? 'on-first-retry' : 'retain-on-failure',
     screenshot: 'only-on-failure',
@@ -102,9 +102,36 @@ export default defineConfig({
       // upstream, which can trip the SDK's retry path and produce duplicate
       // fixture writes for the same prompt.
       ...(process.env.E2E_RECORD === '1' ? ['E2E_RECORD=1'] : []),
-      'PORT=3001',
-      'VITE_APP_URL=http://localhost:3001',
+      // Record runs talk to the real providers with the keys in .env.local
+      // (bun autoloads it; CLOUDFLARE_INCLUDE_PROCESS_ENV forwards it). fal
+      // and xAI need nothing more, but Ark stays OFF under E2E_TEST unless a
+      // host is wired (byteplus-config.ts — a laptop ARK_API_KEY must never
+      // bill a replay run), so wire the real hosts only when recording.
+      ...(process.env.E2E_RECORD === '1'
+        ? [
+            `ARK_BASE_URL=${process.env.ARK_BASE_URL ?? 'https://ark.ap-southeast.bytepluses.com/api/v3'}`,
+            `BYTEPLUS_OPENAPI_HOST=${process.env.BYTEPLUS_OPENAPI_HOST ?? 'ark.ap-southeast-1.byteplusapi.com'}`,
+          ]
+        : []),
+      'PORT=3020',
+      'VITE_APP_URL=http://localhost:3020',
       'OPENROUTER_BASE_URL=http://localhost:4010',
+      // Native xAI (Grok chat / Imagine stills / video) goes to a second
+      // aimock instance — see aimock-server.ts. The Grok adapter's default
+      // base URL ends in /v1, so this one must too.
+      'XAI_BASE_URL=http://localhost:4011/v1',
+      // Replay needs a key so Grok routes natively at all; record runs use
+      // the real XAI_API_KEY from .env.local (the mount forwards it upstream).
+      ...(process.env.E2E_RECORD === '1' ? [] : ['XAI_API_KEY=test-mock-key']),
+      // Native ElevenLabs TTS is built into aimock (`POST /v1/text-to-speech/{id}`
+      // on :4010). The SDK default base is https://api.elevenlabs.io (no /v1
+      // suffix — paths include it). Replay needs a key so the via is claimed
+      // at all; record runs use the real ELEVENLABS_API_KEY from .env.local
+      // (aimock's `providers.elevenlabs` proxies with xi-api-key).
+      'ELEVENLABS_BASE_URL=http://localhost:4010',
+      ...(process.env.E2E_RECORD === '1'
+        ? []
+        : ['ELEVENLABS_API_KEY=test-mock-key']),
       'VITE_DISABLE_DEVTOOLS=true',
     ].join(' ');
 
@@ -130,11 +157,11 @@ export default defineConfig({
     // built-server testing.
     return {
       command: useBuiltServer
-        ? `${envPrefix} bun e2e/start-webserver.ts preview --port=3001`
-        : `${envPrefix} bun e2e/start-webserver.ts dev --port=3001`,
+        ? `${envPrefix} bun e2e/start-webserver.ts preview --port=3020`
+        : `${envPrefix} bun e2e/start-webserver.ts dev --port=3020`,
       // Wait for the TCP port, not an HTTP 2xx — SSR errors should surface to
       // the individual specs via `page.goto()` rather than fail server boot.
-      port: 3001,
+      port: 3020,
       reuseExistingServer: !useBuiltServer,
       timeout: 300_000,
       stdout: 'pipe',
