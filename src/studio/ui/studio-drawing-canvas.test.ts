@@ -5,10 +5,13 @@ import {
   isBlankSnapshot,
 } from './studio-drawing-canvas';
 
-function makeImageData(fill = 255) {
+function makeImageData(fill = 255): ImageData {
   return {
     data: new Uint8ClampedArray(16).fill(fill),
-  } as ImageData;
+    width: 2,
+    height: 2,
+    colorSpace: 'srgb',
+  };
 }
 
 describe('canvasToPngFile', () => {
