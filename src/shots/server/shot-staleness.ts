@@ -24,7 +24,12 @@ import {
 } from '@/shots/shot-spec-currency';
 import { resolveShotReferences } from '@/shots/scene-matching';
 import {
+  characterToBible,
+  locationToBible,
+} from '@/cast/server/bibles-from-scoped';
+import {
   loadNarrowShotPromptContext,
+  type ShotPromptContext,
   type ShotPromptContextRefs,
   type ShotPromptContextSequence,
 } from './prompt-context';
@@ -575,6 +580,49 @@ export async function computeShotStaleness(args: {
         : await scopedDb.characters.listBibleVersionsBySequence(sequence.id),
       at
     );
+  // A digest stamped before #2012 hashed the whole scene roster. Each
+  // character and location this prompt does not name goes back to its bible
+  // as it stood at the stamp, so only an edit to what the shot shows can
+  // stale it. Elements keep no history, so an off-shot one still can.
+  const legacyRoster = async (
+    loaded: { shot: ShotPromptContext; sceneRoster: ShotPromptContext },
+    at: Date
+  ): Promise<ShotPromptContext> => {
+    const shownCharacters = new Set(
+      loaded.shot.characterBible.map((c) => c.characterId)
+    );
+    const shownLocations = new Set(
+      loaded.shot.locationBible.map((l) => l.locationId)
+    );
+    const [characters, locations, history] = await Promise.all([
+      refs?.characters ?? scopedDb.characters.list(sequence.id),
+      refs?.locations ?? scopedDb.sequenceLocations.list(sequence.id),
+      reads ? reads.inputHistory() : loadInputHistory(scopedDb, sequence.id),
+    ]);
+    return {
+      ...loaded.sceneRoster,
+      characterBible: loaded.sceneRoster.characterBible.map((entry) => {
+        const row = shownCharacters.has(entry.characterId)
+          ? undefined
+          : characters.find((r) => r.characterId === entry.characterId);
+        const then =
+          row && versionAt(history.characters.get(row.id), at.getTime());
+        return row && then
+          ? characterToBible({ ...row, ...then, characterId: row.characterId })
+          : entry;
+      }),
+      locationBible: loaded.sceneRoster.locationBible.map((entry) => {
+        const row = shownLocations.has(entry.locationId)
+          ? undefined
+          : locations.find((r) => r.locationId === entry.locationId);
+        const then =
+          row && versionAt(history.locations.get(row.id), at.getTime());
+        return row && then
+          ? locationToBible({ ...row, ...then, locationId: row.locationId })
+          : entry;
+      }),
+    };
+  };
   let selectedMotion: {
     inputHash: string | null;
     createdAt: Date;
@@ -635,7 +683,12 @@ export async function computeShotStaleness(args: {
           referenceHash === liveHash ||
           (await matches(ctx)) ||
           // Stamped on the scene roster, before #2012.
-          (acceptLegacy && (await matches({ ...loaded.sceneRoster, spec })))
+          (acceptLegacy &&
+            reference &&
+            (await matches({
+              ...(await legacyRoster(loaded, reference.createdAt)),
+              spec,
+            })))
             ? 'fresh'
             : 'stale';
       }
@@ -720,7 +773,11 @@ export async function computeShotStaleness(args: {
           (await matches(ctx)) ||
           // Stamped on the scene roster, before #2012.
           (acceptLegacy &&
-            (await matches({ ...loaded.sceneRoster, ...channels })))
+            reference &&
+            (await matches({
+              ...(await legacyRoster(loaded, reference.createdAt)),
+              ...channels,
+            })))
             ? 'fresh'
             : 'stale';
       }
@@ -915,11 +972,20 @@ function bibleMoved<V extends { createdAt: Date }>(
   at: number,
   diff: (then: V) => string[]
 ): string[] | null {
+  const then = versionAt(history, at);
+  return then ? diff(then) : null;
+}
+
+/** The version live at `at`: the newest created at or before it. */
+function versionAt<V extends { createdAt: Date }>(
+  history: readonly V[] | undefined,
+  at: number
+): V | undefined {
   let then: V | undefined;
   for (const v of history ?? []) {
     if (v.createdAt.getTime() <= at) then = v;
   }
-  return then ? diff(then) : null;
+  return then;
 }
 
 /** Plain words for the style knobs a cause names (the hash body's keys). */
@@ -947,10 +1013,7 @@ function styleMoved(
   live: unknown,
   at: number
 ): string[] | null {
-  let then: SequenceStyleVersion | undefined;
-  for (const v of history) {
-    if (v.createdAt.getTime() <= at) then = v;
-  }
+  const then = versionAt(history, at);
   if (!then || live == null) return null;
   try {
     const before = styleConfigHashBody(parseStyleConfig(then.config)) ?? {};
@@ -1002,10 +1065,7 @@ function sceneCauses(
   live: SceneContext,
   at: number
 ): string[] {
-  let then: SceneScriptVersion | undefined;
-  for (const v of history ?? []) {
-    if (v.createdAt.getTime() <= at) then = v;
-  }
+  const then = versionAt(history, at);
   if (!then) {
     if (after(live.scriptCreatedAt, at)) return ['Script'];
     return after(live.scene.updatedAt, at) ? ['Scene details'] : [];
@@ -1100,8 +1160,10 @@ async function findStalenessCauses(args: {
       causes.push(...sceneCauses(inputHistory.scenes.get(sceneId), ctx, at));
     }
   }
-  // Only what this shot's prompts reference (#2012): the union of the two
-  // channels, the same resolution each prompt hash and the clip compare use.
+  // Only what this shot's stale prompts reference (#2012): the union of the
+  // stale channels, the same resolution each prompt hash and the clip compare
+  // use. A channel with nothing stale names nothing — an unwritten visual
+  // prompt (a reference-only shot) would otherwise name the scene's cast.
   const sceneRefs = {
     characterTags: ctx?.scene.continuity?.characterTags,
     environmentTag: ctx?.scene.continuity?.environmentTag,
@@ -1114,15 +1176,21 @@ async function findStalenessCauses(args: {
     locations: [...refs.locations],
     elements: [...refs.elements],
   };
-  const visual = resolveShotReferences(all, sceneRefs, {
-    channel: 'visual',
-    prompt: args.visualPrompt,
-  });
-  const motion = resolveShotReferences(all, sceneRefs, {
-    channel: 'motion',
-    prompt: args.motionPrompt,
-    referenceOnly: args.referenceOnly,
-  });
+  const none = { characters: [], locations: [], elements: [] };
+  const visual =
+    generatedAt.thumbnail || generatedAt.visualPrompt
+      ? resolveShotReferences(all, sceneRefs, {
+          channel: 'visual',
+          prompt: args.visualPrompt,
+        })
+      : none;
+  const motion = generatedAt.motionPrompt
+    ? resolveShotReferences(all, sceneRefs, {
+        channel: 'motion',
+        prompt: args.motionPrompt,
+        referenceOnly: args.referenceOnly,
+      })
+    : none;
   const characters = [...new Set([...visual.characters, ...motion.characters])];
   const locations = [...new Set([...visual.locations, ...motion.locations])];
   const elements = [...new Set([...visual.elements, ...motion.elements])];
