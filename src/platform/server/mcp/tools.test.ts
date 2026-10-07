@@ -2912,7 +2912,8 @@ describe('cast and music edits (#1979)', () => {
       characterId: 'char_ada',
       legacyName: 'Ada',
       selectedVoiceVersionId: newer,
-      selectedSheetVersionId: sheetB,
+      // No look row: the shape a worker older than #2015 leaves.
+      legacySelectedSheetVersionId: sheetB,
     });
     await db.insert(characterVoiceVersions).values([
       {
@@ -2993,6 +2994,179 @@ describe('cast and music edits (#1979)', () => {
     expect(ids(await listVersionsOf('character_sheet', characterId))).toContain(
       sheetB
     );
+  });
+
+  it('adds, edits and removes a look, and dresses a scene in it (#2015)', async () => {
+    const { characterId } = z
+      .object({ characterId: z.string() })
+      .parse(await data('create_character', { sequenceId, name: 'Mia Vale' }));
+    const read = async () =>
+      z
+        .object({
+          character: z.object({
+            standardClothing: z.string().nullable(),
+            looks: z.array(
+              z.object({
+                id: z.string(),
+                name: z.string(),
+                isDefault: z.boolean(),
+                clothing: z.string().nullable(),
+                styling: z.string().nullable(),
+                versionId: z.string(),
+                deletedAt: z.string().nullable(),
+              })
+            ),
+          }),
+        })
+        .parse(await data('get_character', { sequenceId, characterId }))
+        .character;
+
+    // A new character has its default look, under its own id.
+    expect((await read()).looks).toMatchObject([
+      { id: characterId, isDefault: true },
+    ]);
+
+    const { lookId } = z.object({ lookId: z.string() }).parse(
+      await data('create_character_look', {
+        sequenceId,
+        characterId,
+        name: 'Gala gown',
+        clothing: 'red gown',
+        styling: null,
+      })
+    );
+    const first = (await read()).looks.find((look) => look.id === lookId);
+    expect(first).toMatchObject({
+      name: 'Gala gown',
+      isDefault: false,
+      clothing: 'red gown',
+    });
+
+    await data('update_character_look', {
+      sequenceId,
+      characterId,
+      lookId,
+      clothing: 'blue gown',
+      styling: 'hair pinned up',
+    });
+    expect(
+      (await read()).looks.find((look) => look.id === lookId)
+    ).toMatchObject({ clothing: 'blue gown', styling: 'hair pinned up' });
+    const history = z
+      .object({
+        selectedLookVersionId: z.string(),
+        versions: z.array(z.object({ id: z.string(), clothing: z.string() })),
+      })
+      .parse(
+        await data('list_character_look_versions', {
+          sequenceId,
+          characterId,
+          lookId,
+        })
+      );
+    expect(history.versions.map((v) => v.clothing)).toEqual([
+      'blue gown',
+      'red gown',
+    ]);
+    await data('select_character_look_version', {
+      sequenceId,
+      characterId,
+      lookId,
+      versionId: first?.versionId,
+    });
+    expect(
+      (await read()).looks.find((look) => look.id === lookId)?.clothing
+    ).toBe('red gown');
+
+    // A scene picks the look through its continuity; an unknown id is refused.
+    const scriptId = async () =>
+      z
+        .object({ script: z.object({ id: z.string() }) })
+        .parse(await data('get_scene', { sequenceId, sceneId })).script.id;
+    expect(
+      await call('update_scene', {
+        sequenceId,
+        sceneId,
+        expectedScriptVersionId: await scriptId(),
+        continuity: { characterLooks: { mia_vale: generateId() } },
+      })
+    ).toMatchObject(refusal('VALIDATION_ERROR'));
+    await data('update_scene', {
+      sequenceId,
+      sceneId,
+      expectedScriptVersionId: await scriptId(),
+      continuity: { characterLooks: { mia_vale: lookId } },
+    });
+
+    // The pick is filed under the character's own tag, whatever key was sent.
+    const [stored] = await db
+      .select({ continuity: sceneScriptVersions.continuity })
+      .from(sceneScriptVersions)
+      .innerJoin(
+        scenes,
+        eq(scenes.selectedScriptVersionId, sceneScriptVersions.id)
+      )
+      .where(eq(scenes.id, dbSceneId(sceneId)));
+    expect(Object.values(stored?.continuity?.characterLooks ?? {})).toEqual([
+      lookId,
+    ]);
+    expect(Object.keys(stored?.continuity?.characterLooks ?? {})).not.toEqual([
+      'mia_vale',
+    ]);
+    // A second look with the same name is refused.
+    expect(
+      await call('create_character_look', {
+        sequenceId,
+        characterId,
+        name: 'gala gown',
+        clothing: null,
+        styling: null,
+      })
+    ).toMatchObject(refusal('CONFLICT'));
+
+    // Worn: it cannot be removed, and neither can the default look.
+    expect(
+      await call('remove_character_look', { sequenceId, characterId, lookId })
+    ).toMatchObject(refusal('CONFLICT'));
+    expect(
+      await call('remove_character_look', {
+        sequenceId,
+        characterId,
+        lookId: characterId,
+      })
+    ).toMatchObject(refusal('VALIDATION_ERROR'));
+
+    await data('update_scene', {
+      sequenceId,
+      sceneId,
+      expectedScriptVersionId: await scriptId(),
+      // A patch: null puts this character back in its default look.
+      continuity: { characterLooks: { 'Mia Vale': null } },
+    });
+    await data('remove_character_look', { sequenceId, characterId, lookId });
+    // A removed look is not edited or drawn until it is restored.
+    expect(
+      await call('update_character_look', {
+        sequenceId,
+        characterId,
+        lookId,
+        clothing: 'green gown',
+      })
+    ).toMatchObject(refusal('VALIDATION_ERROR'));
+    expect(
+      await call('regenerate_character_sheet', {
+        sequenceId,
+        characterId,
+        lookId,
+      })
+    ).toMatchObject(refusal('VALIDATION_ERROR'));
+    expect(
+      (await read()).looks.find((look) => look.id === lookId)?.deletedAt
+    ).not.toBeNull();
+    await data('restore_character_look', { sequenceId, characterId, lookId });
+    expect(
+      (await read()).looks.find((look) => look.id === lookId)?.deletedAt
+    ).toBeNull();
   });
 
   it('creates, edits, deletes and restores a location and picks its reference', async () => {

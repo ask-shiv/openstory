@@ -79,6 +79,8 @@ function makeScopedDb(overrides: {
   }>;
   /** Bible history rows (#1600), oldest first. */
   characterBibleVersions?: unknown[];
+  /** Look definition rows (#2015), oldest first. */
+  characterLookVersions?: unknown[];
   /** Style snapshot rows (#1600), oldest first. */
   styleVersions?: unknown[];
   /** Selected shot dialogue rows (#1784). */
@@ -96,6 +98,11 @@ function makeScopedDb(overrides: {
       listBibleVersionsBySequence: vi
         .fn()
         .mockResolvedValue(overrides.characterBibleVersions ?? []),
+    },
+    characterLooks: {
+      listVersionsBySequence: vi
+        .fn()
+        .mockResolvedValue(overrides.characterLookVersions ?? []),
     },
     sequenceLocations: {
       list: vi.fn().mockResolvedValue([]),
@@ -535,6 +542,8 @@ describe('staleness causes (#1194)', () => {
           {
             name: 'Woman',
             characterId: 'woman',
+            lookId: 'c-woman',
+            looks: [],
             consistencyTag: null,
             updatedAt: afterGen,
             sheetGeneratedAt: null,
@@ -542,6 +551,8 @@ describe('staleness causes (#1194)', () => {
           {
             name: 'Man',
             characterId: 'man',
+            lookId: 'c-man',
+            looks: [],
             consistencyTag: null,
             updatedAt: before,
             sheetGeneratedAt: before,
@@ -599,14 +610,24 @@ describe('staleness causes (#1194)', () => {
       visualSelected: { text: 'WOMAN in a dress; MAN behind her.' },
       characterBibleVersions: [
         { ...bible, characterId: 'c-woman', createdAt: before },
-        // An edit after the still: this is the one live now.
+        { ...bible, name: 'Man', characterId: 'c-man', createdAt: before },
+      ],
+      // Clothing is the look's (#2015). An edit after the still: the second
+      // version is the one live now.
+      characterLookVersions: [
         {
-          ...bible,
-          standardClothing: 'dress',
-          characterId: 'c-woman',
+          lookId: 'c-woman',
+          clothing: 'coat',
+          styling: null,
+          createdAt: before,
+        },
+        {
+          lookId: 'c-woman',
+          clothing: 'dress',
+          styling: null,
           createdAt: afterGen,
         },
-        { ...bible, name: 'Man', characterId: 'c-man', createdAt: before },
+        { lookId: 'c-man', clothing: 'coat', styling: null, createdAt: before },
       ],
     });
     Object.assign(scopedDb, {
@@ -637,6 +658,10 @@ describe('staleness causes (#1194)', () => {
           {
             ...bible,
             standardClothing: 'dress',
+            styling: null,
+            lookId: 'c-woman',
+            lookName: 'Default',
+            looks: [],
             id: 'c-woman',
             characterId: 'woman',
             updatedAt: afterGen,
@@ -646,6 +671,10 @@ describe('staleness causes (#1194)', () => {
           {
             ...bible,
             name: 'Man',
+            styling: null,
+            lookId: 'c-man',
+            lookName: 'Default',
+            looks: [],
             id: 'c-man',
             characterId: 'man',
             updatedAt: afterGen,
@@ -659,6 +688,147 @@ describe('staleness causes (#1194)', () => {
     });
 
     expect(result.causes).toEqual(['Character "Woman": clothing, sheet']);
+  });
+
+  it('names the look the scene dresses a character in, and only that look (#2015)', async () => {
+    buildRegenerateShotSnapshot.mockResolvedValue({
+      snapshotInputHash: 'image-live',
+    });
+    loadNarrowShotPromptContext.mockResolvedValue({});
+    hashVisualPromptInput.mockResolvedValue('visual-stored');
+    hashMotionPromptInput.mockResolvedValue('motion-stored');
+
+    const before = new Date('2025-12-31T00:00:00Z');
+    const generated = new Date('2026-01-01T00:00:00Z');
+    const afterGen = new Date('2026-01-02T00:00:00Z');
+    const look = (id: string, name: string, clothing: string) => ({
+      id,
+      name,
+      isDefault: id === 'c-woman',
+      clothing,
+      styling: null,
+      sheetImageUrl: null,
+      sheetStatus: 'completed',
+      sheetInputHash: null,
+      selectedSheetVersionId: null,
+    });
+    const woman = {
+      id: 'c-woman',
+      characterId: 'woman',
+      name: 'Woman',
+      age: '30s',
+      gender: null,
+      ethnicity: null,
+      physicalDescription: 'tall',
+      distinguishingFeatures: null,
+      personality: null,
+      movement: null,
+      voiceOnly: false,
+      isPerson: true,
+      consistencyTag: 'woman',
+      // Off the read she wears her default look.
+      lookId: 'c-woman',
+      lookName: 'Default',
+      standardClothing: 'office suit',
+      styling: null,
+      looks: [
+        look('c-woman', 'Default', 'office suit'),
+        look('gala', 'Gala gown', 'blue gown'),
+      ],
+      updatedAt: before,
+      sheetGeneratedAt: null,
+    };
+    const run = async (
+      sceneLooks: Record<string, string> | undefined,
+      sceneHistory: unknown[] = []
+    ) => {
+      const scopedDb = makeScopedDb({
+        motionSelectedHash: 'motion-stored',
+        visualSelected: { text: 'WOMAN at the top of the stairs.' },
+        characterBibleVersions: [
+          { ...woman, characterId: 'c-woman', createdAt: before },
+        ],
+        characterLookVersions: [
+          {
+            lookId: 'c-woman',
+            clothing: 'office suit',
+            styling: null,
+            createdAt: before,
+          },
+          {
+            lookId: 'gala',
+            clothing: 'red gown',
+            styling: null,
+            createdAt: before,
+          },
+          // The gown was edited after the still; the default look was not.
+          {
+            lookId: 'gala',
+            clothing: 'blue gown',
+            styling: null,
+            createdAt: afterGen,
+          },
+        ],
+      });
+      Object.assign(scopedDb, {
+        scenes: {
+          getById: vi.fn().mockResolvedValue({
+            updatedAt: before,
+            continuity: {
+              characterTags: ['woman'],
+              characterLooks: sceneLooks,
+            },
+          }),
+        },
+        sceneScriptVersions: {
+          getSelected: vi.fn().mockResolvedValue({ createdAt: before }),
+          listBySequence: vi.fn().mockResolvedValue(sceneHistory),
+        },
+        sequenceEvents: { listByTarget: vi.fn().mockResolvedValue([]) },
+      });
+      const result = await computeShotStaleness({
+        dialogue: NO_LINES,
+        scopedDb,
+        sequence,
+        shot: asStub<Shot>({ id: 'shot-1', sceneId: 'scene-1' }),
+        frame,
+        selectedImage: asStub<FrameVariant>({
+          id: 'fv-1',
+          inputHash: 'image-old',
+          model: null,
+          url: null,
+          generatedAt: generated,
+        }),
+        scene,
+        refs: asStub({
+          characters: [woman],
+          locations: [],
+          elements: [],
+          style: null,
+        }),
+      });
+      return result.causes;
+    };
+
+    // The gala scene names the look, and what moved in it.
+    expect(await run({ woman: 'gala' })).toEqual([
+      'Character "Woman" (Gala gown): clothing',
+    ]);
+    // A scene in her default look is not touched by the gown's edit.
+    expect(await run(undefined)).toEqual([]);
+    // The scene switched her into the gown after the still: the look is named.
+    const causes = await run({ woman: 'gala' }, [
+      {
+        version: {
+          id: 'v1',
+          sceneId: 'scene-1',
+          content: { extract: '', dialogue: [] },
+          continuity: { characterTags: ['woman'] },
+          createdAt: before,
+        },
+      },
+    ]);
+    expect(causes).toContain('Character "Woman" (Gala gown): clothing, look');
   });
 
   it('names only the characters and locations this shot references (#2012)', async () => {
@@ -721,6 +891,8 @@ describe('staleness causes (#1194)', () => {
           {
             id: 'c-woman',
             characterId: 'woman',
+            lookId: 'c-woman',
+            looks: [],
             name: 'Woman',
             consistencyTag: '',
             updatedAt: afterGen,
@@ -1384,6 +1556,11 @@ describe('a two-person, two-room scene, one of each per shot (#2012)', () => {
       ...edited,
       id: `c-${id}`,
       characterId: id,
+      // In its default look (#2015), whose clothing is `standardClothing`.
+      lookId: `c-${id}`,
+      lookName: 'Default',
+      styling: null,
+      looks: [],
       name: capitalised(id),
       consistencyTag: id,
       voiceDescription: '',
@@ -1402,10 +1579,15 @@ describe('a two-person, two-room scene, one of each per shot (#2012)', () => {
       referenceGeneratedAt: before,
     });
   /** The analysis-time version, then the live one. */
-  const characterVersions = (row: ShotStalenessRefs['characters'][number]) => [
-    { ...row, ...bible, characterId: row.id, createdAt: before },
-    { ...row, characterId: row.id, createdAt: row.updatedAt },
-  ];
+  const characterVersions = (row: ShotStalenessRefs['characters'][number]) => {
+    // A bible version carries no clothing (#2015): that is the look's.
+    const { standardClothing: _then, ...bibleThen } = bible;
+    const { standardClothing: _now, ...bibleNow } = row;
+    return [
+      { ...bibleNow, ...bibleThen, characterId: row.id, createdAt: before },
+      { ...bibleNow, characterId: row.id, createdAt: row.updatedAt },
+    ];
+  };
   const locationVersions = (row: ShotStalenessRefs['locations'][number]) => [
     { ...row, ...room, locationId: row.id, createdAt: before },
     { ...row, locationId: row.id, createdAt: row.updatedAt },
@@ -1420,7 +1602,7 @@ describe('a two-person, two-room scene, one of each per shot (#2012)', () => {
       ctx.characterBible
         .map(
           (c) =>
-            `${c.characterId}:${c.physicalDescription}/${c.distinguishingFeatures}`
+            `${c.characterId}:${c.physicalDescription}/${c.distinguishingFeatures}/${c.standardClothing}`
         )
         .join('|'),
       ctx.locationBible
@@ -1429,7 +1611,7 @@ describe('a two-person, two-room scene, one of each per shot (#2012)', () => {
     ].join('#');
   };
   const stampedOnRoster =
-    'dazza:old/old|kylie:old/old#bathroom:old|verandah:old';
+    'dazza:old/old/|kylie:old/old/#bathroom:old|verandah:old';
 
   type Edits = Partial<
     Record<'kylie' | 'dazza' | 'bathroom' | 'verandah', Record<string, string>>
@@ -1463,6 +1645,17 @@ describe('a two-person, two-room scene, one of each per shot (#2012)', () => {
         ...characterVersions(kylie),
         ...characterVersions(dazza),
       ],
+      // Clothing is the default look's (#2015): bare at the stamp, then
+      // whatever the row wears now.
+      characterLookVersions: [kylie, dazza].flatMap((row) => [
+        { lookId: row.lookId, clothing: '', styling: null, createdAt: before },
+        {
+          lookId: row.lookId,
+          clothing: row.standardClothing,
+          styling: null,
+          createdAt: row.updatedAt,
+        },
+      ]),
       locationBibleVersions: [
         ...locationVersions(bathroom),
         ...locationVersions(verandah),
@@ -1518,6 +1711,18 @@ describe('a two-person, two-room scene, one of each per shot (#2012)', () => {
 
     expect(kylieShot.motionPrompt).toBe('fresh');
     expect(bucketShot.motionPrompt).toBe('fresh');
+  });
+
+  it('keeps a pre-#2012 digest fresh when someone off the shot changed clothes (#2015)', async () => {
+    const off = await staleness('KYLIE sits in the BATHROOM.', {
+      dazza: { standardClothing: 'gown' },
+    });
+    const on = await staleness('KYLIE sits in the BATHROOM.', {
+      kylie: { standardClothing: 'gown' },
+    });
+
+    expect(off.motionPrompt).toBe('fresh');
+    expect(on.motionPrompt).toBe('stale');
   });
 
   it('keeps a pre-#2012 digest fresh when only a room off the shot moved', async () => {

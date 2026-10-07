@@ -42,7 +42,7 @@ vi.doMock('@/billing/server/fal-pricing-live', () => ({
   getEffectiveFalPricing: vi.fn(async () => ({})),
 }));
 
-const createCastRecords = vi.fn(async () => ({ elements: [] }));
+const createCastRecords = vi.fn(async () => ({ elements: [], lookIds: {} }));
 vi.doMock('@/cast/server/workflows/cast-records', () => ({
   ...realCastRecords,
   createCastRecords,
@@ -66,6 +66,7 @@ const SPLIT: SceneSplitWorkflowResult = {
   title: 'Derived',
   shotMapping: [{ analysisSceneId: 'as_1', shotId: 'sh_1', frameId: 'fr_1' }],
   characterBible: [],
+  sceneLooks: {},
   locationBible: [],
   elementBible: [],
   dialogueVersionIdByShotId: {},
@@ -79,6 +80,7 @@ const RAW_ADA: CharacterBibleEntry = {
   ethnicity: 'unspecified',
   physicalDescription: 'as written in the script',
   standardClothing: 'lab coat',
+  looks: [],
   distinguishingFeatures: '',
   personality: '',
   movement: '',
