@@ -59,6 +59,8 @@ import { resolveVideoModel } from '@/models/resolve-asset-models';
 import type { Scene } from '@/shots/scene-analysis.schema';
 import { getEffectiveFalPricing } from '@/billing/server/fal-pricing-live';
 import { estimateVideoCost, gateEstimate } from '@/billing/cost-estimation';
+import { seedanceEditSeconds } from '@/motion/seedance-edit';
+import { seedanceRunsOnArk } from '@/motion/server/motion-generation';
 import { estimateTtsCost } from '@/billing/elevenlabs-pricing';
 import { addMicros } from '@/billing/money';
 import {
@@ -1074,6 +1076,14 @@ export class UpdateStaleShotsWorkflow extends OpenStoryWorkflowEntrypoint<Update
               ? (still?.url ?? undefined)
               : undefined,
             referenceOnly: !target.usesStartFrame,
+            // Decided once, here; the preflight below holds what it says
+            // (#2036). The via is a credential, read through its hatch.
+            seedanceEditSeconds: seedanceEditSeconds({
+              model,
+              onArk: await seedanceRunsOnArk(scopedDb.credentials),
+              prompt,
+              references: referenceImages,
+            }),
             // Same rule as `expectedFrameVersionId` above — a clip rendered
             // from references names no still.
             frameVersionId: target.usesStartFrame ? (still?.id ?? null) : null,
@@ -1924,16 +1934,23 @@ export class UpdateStaleShotsWorkflow extends OpenStoryWorkflowEntrypoint<Update
               scopedDb.liveRead,
               addMicros(
                 gateEstimate(
-                  estimateVideoCost(model, input.duration ?? 3, {
-                    pricing: await getEffectiveFalPricing(),
-                    resolution:
-                      input.draft && supportsDraftMode(model)
-                        ? DRAFT_RESOLUTION
-                        : input.resolution,
-                    referenceOnly: input.referenceOnly,
-                    hasReferenceImages:
-                      (input.referenceImages?.length ?? 0) > 0,
-                  }),
+                  estimateVideoCost(
+                    model,
+                    Math.max(
+                      input.duration ?? 3,
+                      input.seedanceEditSeconds ?? 0
+                    ),
+                    {
+                      pricing: await getEffectiveFalPricing(),
+                      resolution:
+                        input.draft && supportsDraftMode(model)
+                          ? DRAFT_RESOLUTION
+                          : input.resolution,
+                      referenceOnly: input.referenceOnly,
+                      hasReferenceImages:
+                        (input.referenceImages?.length ?? 0) > 0,
+                    }
+                  ),
                   { model, operation: 'update-stale-shots:video' }
                 ),
                 estimateTtsCost(ttsChars)
