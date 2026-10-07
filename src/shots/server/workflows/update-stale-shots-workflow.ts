@@ -48,6 +48,7 @@
  */
 
 import { generateId } from '@/platform/id';
+import { sanitizeFailResponse } from '@/platform/server/workflow/sanitize-fail-response';
 import {
   DEFAULT_MUSIC_MODEL,
   supportsDraftMode,
@@ -438,7 +439,7 @@ export class UpdateStaleShotsWorkflow extends OpenStoryWorkflowEntrypoint<Update
               scopedDb.characters.failSheetClaim(
                 id,
                 sheetVersionId,
-                error instanceof Error ? error.message : String(error)
+                sanitizeFailResponse(error)
               )
             );
           }
@@ -486,7 +487,7 @@ export class UpdateStaleShotsWorkflow extends OpenStoryWorkflowEntrypoint<Update
               scopedDb.sequenceLocations.failReferenceClaim(
                 id,
                 referenceVersionId,
-                error instanceof Error ? error.message : String(error)
+                sanitizeFailResponse(error)
               )
             );
           }
@@ -558,7 +559,7 @@ export class UpdateStaleShotsWorkflow extends OpenStoryWorkflowEntrypoint<Update
                 scopedDb.characters.markVoiceClaimTerminal(
                   husk,
                   'failed',
-                  error instanceof Error ? error.message : String(error)
+                  sanitizeFailResponse(error)
                 )
               );
             }
@@ -1724,7 +1725,7 @@ export class UpdateStaleShotsWorkflow extends OpenStoryWorkflowEntrypoint<Update
             await step.do('fail-music-track-claim', async () => {
               await scopedDb.sequenceVariants.failMusicClaim(
                 { sequenceId, variantId: claimedTrack },
-                error instanceof Error ? error.message : String(error)
+                sanitizeFailResponse(error)
               );
             });
           };
@@ -2060,11 +2061,7 @@ export function dialogueTargetOutcome(
         });
       }
     } else if (!target.regenVideo) {
-      failures.push({
-        shotId: target.shotId,
-        stage: 'dialogue',
-        error: outcome.error,
-      });
+      failures.push(toFailure(target.shotId, 'dialogue', outcome.error));
     }
   }
   return { updated, failures };
@@ -2078,6 +2075,6 @@ function toFailure(
   return {
     shotId,
     stage,
-    error: error instanceof Error ? error.message : String(error),
+    error: sanitizeFailResponse(error),
   };
 }
