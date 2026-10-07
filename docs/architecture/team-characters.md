@@ -107,64 +107,64 @@ only after the character has been read.
 - **Deleting a sequence** removes its cast looks and links, then only the
   characters nothing else holds: not in the library and in no other sequence
   (`charactersOnlyIn`). The ids are read before the batch, because the links
-  that say so go first.
+  that say so go first. See § Hard deletes.
+
+## Hard deletes
+
+Nothing cascades from a sequence to a character, or from a character to its
+rows. Every foreign key into `characters` is `no action` or `restrict`, so a
+delete that forgets a child fails instead of taking rows with it.
+
+- `deleteCharactersStatements(db, where)` (`src/cast/server/db/characters.ts`)
+  is the one list of what a character owns: bible versions, look versions,
+  looks, sheet variants, voice versions, then the character. The cast looks
+  and links go before it (`deleteCastStatements`).
+- Two methods use it, each in one batch: `characters.delete` (one of the
+  team's characters) and `sequences.delete` (the characters that sequence
+  alone holds). Neither has a caller in the app today: a sequence is
+  archived, not deleted.
+- **Team.** Both are scoped to the team in every statement. Another team's
+  id deletes nothing.
+- **Voices.** A saved voice is an account-wide provider slot, freed only
+  through `releaseVoiceIfUnreferenced` (`elevenlabs.md`), which a db method
+  cannot call. So both deletes are **refused** while they would strand one
+  (`assertVoicesReleased`).
+  - What counts (`voiceIdsHeldOnlyBy`): a voice id on **any** voice version
+    of a character being removed, selected or not, that is not released, is
+    not a Seed voice (`voiceProviderOf`), and that no surviving row points
+    at (another character's selected version, or a talent). An unselected
+    version with `releasedAt` null is the only record of a slot whose
+    provider delete failed, so it counts.
+  - The caller reads the ids (`characters.getVoiceIdsToRelease`,
+    `sequences.getVoiceIdsToReleaseOnDelete`), drops each live pointer with
+    `releaseCharacterVoice`, runs the rest through
+    `releaseVoiceIfUnreferenced`, and passes the ids to `delete` as
+    `releasedVoiceIds`. An id it did not name stops the delete.
+  - The ids are named, not re-read from `releasedAt`, because a release does
+    not always stamp it (a voice that takes no slot, an unconfigured or
+    refused key). Re-reading would refuse those deletes for good.
+  - A character kept by the library or by another sequence is not removed,
+    so its voices are not in the way.
+- Deleting a team is refused while it has characters (`characters.team_id`,
+  no action).
 
 ## Legacy columns
 
-`characters.sequence_id`, `character_id`, `talent_id`, `deleted_at` and the
-sheet state on `character_looks` are `legacy*` in Drizzle. The SQL names are
-unchanged.
+The four cast columns on `characters` (`sequence_id`, `character_id`,
+`talent_id`, `deleted_at`), their indexes and the unique index are gone, and
+`team_id` is NOT NULL. Nothing writes or reads them, and the backfill that
+placed an older worker's rows went with them.
 
-- `sequence_id` and `character_id` are **still written** on every create:
-  they are NOT NULL and the legacy unique index is on them.
-- `talent_id` and `deleted_at` are **still written** on every create,
-  recast, remove and restore, for two reasons only: a worker older than this
-  reads them until the deploy finishes, and they are what a rollback to that
-  worker would read. Nothing in this worker reads them as the cast or the
-  removal. The writes are removed in the column-drop PR.
-- The sheet state on `character_looks` is written only at insert, where NOT
-  NULL forces `sheet_status`. A rollback would therefore read stale sheet
-  state there.
-- Two places read the legacy columns, both only to place a row the older
-  worker wrote: `backfillCast` / `backfillCastOfSequence`
-  (`src/platform/server/db/sequence-cast-backfill.ts`), and the lookup in
-  `characters.create` that finds such a row by `sequence_id` and
-  `character_id`.
+Still there, unread: the sheet state on `character_looks`
+(`legacy*` in Drizzle). `sheet_status` is written at insert only because it
+is NOT NULL. Dropping those four is a plain `DROP COLUMN` each, for a later
+PR.
 
-Dropping `sequence_id` and `talent_id` is a table rebuild, and
-`character_sheet_variants` and `character_voice_versions` cascade from
-`characters`. So the drop is its own PR, applied by hand, after this one is
-live. `team_id` becomes NOT NULL there too.
+## Migrations
 
-## The deploy window
-
-Migrations run before the new worker is live. For that minute the old worker
-still writes the old columns.
-
-- **A character or look it creates** has no cast link or cast look. The
-  reconcile cron's `sequence_cast.backfill` pass (`backfillCast`, every five
-  minutes) gives it one, with the same statements as the migration. Until
-  then the character is missing from its sequence, and a write to such a
-  look is "not found".
-- Two writes cannot wait for the cron and run the same backfill themselves:
-  `characters.create`, when a re-analysis lands on such a character (the
-  legacy unique index would refuse a second row), and a sequence delete,
-  when the sequence holds one (the legacy cascade would reach it and its
-  bible versions would refuse).
-- **A sheet it lands** on the look's old columns is promoted by the
-  `character_looks.claims` pass, which now reads the cast looks.
-- **An edit it makes to an existing character** in that minute (a bible
-  edit, a remove, a recast) is written to the old columns only and is not
-  carried over.
-
-`backfillCast` assumes each character has one link, like the id-only
-methods. It goes in the PR that drops the columns.
-
-## Migration
-
-`20261004082223_team_characters_cast` is generated: two `CREATE TABLE`, three
-`ADD COLUMN`, indexes. `20261004082252_backfill_team_characters_cast` is
-hand-written data SQL. Both run on every automatic path.
+**Expand** (PR #2022). `20261004082223_team_characters_cast` is generated:
+two `CREATE TABLE`, three `ADD COLUMN`, indexes.
+`20261004082252_backfill_team_characters_cast` is hand-written data SQL.
 
 - A cast link reuses its character's ULID. A cast look reuses its look's.
 - Every pointer, status and in-flight claim is copied as it is. No stored
@@ -173,6 +173,107 @@ hand-written data SQL. Both run on every automatic path.
   null: who played the character then was never recorded.
 - A character with no bible version gets one first, as the #1600 backfill
   made them, so `sequence_cast.bibleVersionId` can be NOT NULL.
+
+**Contract** (the column drop). Two files, and the order matters.
+
+1. `20261006232126_loosen_character_children` — generated, unedited. It
+   rebuilds `character_bible_versions`, `character_sheet_variants` and
+   `character_voice_versions` so their foreign key to `characters` is
+   `no action`. All three are leaves: nothing references them, so their own
+   rebuild cannot cascade.
+2. `20261006232156_drop_character_legacy_columns` — custom
+   (`bun db:generate --custom`). Drizzle's own table definition, column list
+   and index statements, in a different order:
+   - `PRAGMA defer_foreign_keys = ON` first. D1 runs a migration file in one
+     transaction, where `PRAGMA foreign_keys=OFF` is ignored. The defer
+     pragma lasts for that transaction only, so it is in this file.
+   - A **guard**: it counts foreign keys into `characters` that act on delete
+     (cascade, set null, set default), across every table, and fails the file
+     unless that is zero. It uses `GLOB`, not `LIKE … ESCAPE`, so the file
+     has no backslash for a statement splitter to read differently.
+   - Copy out, drop `characters`, **create it again**, copy back, drop the
+     copy. Not a rename: SQLite counts a violation per child row when the
+     table is dropped and takes one off only when a row is inserted into a
+     table of that name, so a rename leaves the count above zero and the
+     commit fails.
+   - The copy back names its columns. `INSERT … SELECT *` between identical
+     tables can take SQLite's bulk path, which skips that bookkeeping.
+
+Why the guard and migration 1 exist: with checks deferred, a `cascade` child
+is deleted when the parent is dropped and the transaction still commits, and
+`restrict` does not stop it (it behaves like `no action`). Without migration
+1, migration 2 reported success and emptied the sheet and voice tables.
+
+What was run (`wrangler d1 migrations apply --local`, one file per call):
+
+- Local dev data, and a copy of production (2,095 characters, 2,097 bible
+  versions, 2,132 sheet variants, 251 voice versions): every row of the
+  eight tables identical before and after, minus the dropped columns; all
+  other tables' counts unchanged; `foreign_key_check` empty.
+- Migration 2 without the pragma: fails, rolls back, nothing lost.
+- Drizzle's statements as emitted (copy, drop, rename), with the pragma:
+  fails at commit, rolls back, nothing lost.
+- Migration 2 without migration 1: stopped by the guard, nothing lost.
+
+On remote D1:
+
+- The PR preview applied both files to an empty remote D1.
+- On 2026-10-07 both files were applied with `migrations apply --remote` to
+  a throwaway remote D1 loaded with a production export (188,226 rows):
+  about 50 ms each, all eight tables identical in count, no foreign key
+  violations, no orphans, both files recorded. The two files copy about
+  4,500 child rows once and the character rows twice.
+- Not shown on remote: the out-of-order control (the guard stopping
+  migration 2 when migration 1 has not run). That was run on local D1 only.
+
+`bun db:generate --custom` copies the previous snapshot, so migration 2's
+`snapshot.json` is the one drizzle-kit wrote for the generated form of the
+same change, with the custom migration's id. `bun db:generate` reports no
+changes after it.
+
+## The deploy window
+
+Nothing is applied to production by hand. The merge's deploy runs the two
+files, one after the other, and then swaps the worker. The window is the
+minutes between the first file and the new worker going live. For all of it
+the previous worker (the expand PR's code) is serving.
+
+**From file 1** (children no longer cascade):
+
+- That worker's hard deletes, `characters.delete` and `sequences.delete`,
+  relied on the cascade to remove sheet variants and voice versions. With
+  sheets or voices present they now fail on the foreign key. Neither has a
+  caller in the app, so nothing a user does reaches this. The cast panel's
+  Remove is a soft remove and is not affected by file 1.
+
+**From file 2** (`characters` has no `sequence_id`, `character_id`,
+`talent_id` or `deleted_at`). That worker's reads do not select those
+columns, so everything it shows still works. Its writes that name them fail
+with "no such column", in one batch each, so nothing is half written:
+
+- **Adding a character**, by hand or in analysis (`create-cast-records`).
+- **Any bible edit or recast**, and a re-analysis onto an existing character.
+- **Removing or restoring a character** (the soft remove).
+- Its **`sequence_cast.backfill` cron pass** would fail the same way if it
+  reached those columns; it counts first and finds nothing to do.
+
+An analysis run recovers only if its step is still retrying when the new
+worker goes live. `create-cast-records` sets no retry policy, so it has
+Cloudflare Workflows' default: five retries, ten seconds apart to start and
+doubling, about five minutes in all (from Cloudflare's documentation, not
+measured here). A run that uses them up fails, and the user starts it again.
+
+Still working throughout: voice writes, look edits, sheet claims and
+landings, everything on the cast tables.
+
+If file 2 fails after file 1 applied, the deploy stops there and the previous
+worker keeps serving. Production stays in the "from file 1" state, which
+costs nothing a user can reach, until a fix to file 2 is merged and the next
+deploy runs it. A failed file 2 rolls back whole: no `__new_characters` or
+guard table is left when it ran as one transaction.
+
+A rollback of the worker to the expand PR's code is not possible after file
+2: that code cannot create or edit a character.
 
 ## Open question
 

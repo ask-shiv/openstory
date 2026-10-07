@@ -250,9 +250,9 @@ changing the area, and update it in the same PR.**
   character belongs to the team; a sequence uses it through a `sequence_cast`
   link that pins its bible version, and `sequence_cast_looks` pins each look
   and holds its sheet pointer and claim. Reads return the character as its
-  sequence casts it; writes key on `castId` / `castLookId`. Never read the
-  `legacy*` cast columns on `characters` or `character_looks`: they are
-  written only for a worker older than #2017.
+  sequence casts it; writes key on `castId` / `castLookId`. Nothing cascades
+  from `characters`: a hard delete goes through `deleteCharactersStatements`
+  and is refused while it would strand a saved voice.
 - **Generation plan, stop-at and continue (#1408, #1816)** —
   `docs/architecture/generation-plan.md`. What a sequence still owes is the
   generation plan, derived from live D1 — never a stored stage. `stopAt` is the
@@ -354,13 +354,23 @@ Remote migrations apply via `wrangler d1 migrations apply` (#897/#900: the `depl
 
 This destroyed `team_members`, `session`, `account`, and `passkey` in production on 2026-04-29 (issue #612, migration `20260428013041_productive_kabuki`). `PRAGMA defer_foreign_keys = ON` does **not** help — it defers constraint _checks_ but CASCADE still fires.
 
-**Workarounds (in order):**
+**Rules (in order):**
 
 1. **Avoid table rebuilds.** Prefer `ALTER TABLE … RENAME COLUMN / ADD COLUMN / DROP COLUMN` — SQLite/D1 support these without a rebuild.
-2. **Apply destructive migrations manually.** Snapshot first (`wrangler d1 export`), then apply via the D1 dashboard or `wrangler d1 ... --file=…`. Do not let the automated `wrangler d1 migrations apply` paths run it (mark it applied in `d1_migrations` afterwards so they skip it).
+2. **Never apply a migration to production by hand.** Every migration reaches prod only through the normal merge and deploy: no dashboard, no `wrangler d1 execute`, no hand-marked `d1_migrations` row. A migration that has to rebuild a parent table is made safe for the automatic path instead. All of these, in one custom file (worked example: `20261006232156_drop_character_legacy_columns`, #2017):
+   - No child with a cascade, set-null or set-default FK into the parent. Loosen them to `no action` in an earlier migration.
+   - A guard at the top that counts such FKs across every table and fails the file unless there are none, so it fails closed if the earlier migration did not run.
+   - `PRAGMA defer_foreign_keys = ON` first. Under it a cascade child is silently emptied and `restrict` does not stop it; that is what the guard is for.
+   - Copy out, drop, **create the table again** and copy back with named columns. Not drizzle's rename, which fails at commit.
+   - The pattern drops any trigger on the rebuilt table without a word (none exist today).
+
+   Prove it before merging, on a copy of production and on a scratch remote D1. What has been run for the worked example: `wrangler d1 migrations apply --local` on local data and on a copy of production, the PR-preview path on an empty remote D1, and on 2026-10-07 `migrations apply --remote` on a throwaway remote D1 loaded with a production export (188,226 rows; all eight character tables identical in count, no foreign key violations, both files recorded). Still local only: the out-of-order control, the guard stopping file 2 when file 1 has not run. Details: `docs/architecture/team-characters.md` § Migrations.
+
 3. **Avoid `ON DELETE CASCADE`** on FKs to long-lived parent tables (`user`, `teams`, `sequences`). Use `'restrict'` or `'no action'` and clean up children in app code.
 
-**Local guardrail:** `scripts/check-migrations.ts` runs as a Lefthook pre-commit step on staged `drizzle/migrations/**/*.sql`. It flags `DROP TABLE`, `TRUNCATE`, `DELETE FROM`, `ALTER TABLE … DROP COLUMN`, and annotates each `DROP TABLE` with the count of inbound `ON DELETE CASCADE` FKs. Bypass for a manually-applied migration: `bun scripts/check-migrations.ts --allow-destructive`. Note `--allow-destructive` is an argument to the SCRIPT — the Lefthook step (`lefthook.yml`) invokes it without one, so to land an intentionally destructive migration commit with `LEFTHOOK_EXCLUDE=migration-safety git commit`, NOT `--no-verify` (which also skips typecheck, lint, format and knip). A native `ALTER TABLE … DROP COLUMN` is flagged but is exactly the refactor the check asks for — it rebuilds no table, so #612 does not apply.
+**Loading a D1 export.** A whole `wrangler d1 export` file does not load back: a child's rows come before its parent table exists (`no such table`). Export twice, `--no-data` then `--no-schema`, and load the schema file first. On **local** D1 the data file then loads as it is. On **remote** D1 it still fails with a foreign key error: the remote import is evidently not one transaction, so the pragma at the top of the file does not cover it. Put the rows in parent-table-first order before loading (no table in this schema references itself or forms a loop, so such an order exists; `scripts/reorder-d1-dump.ts` does the reordering, but its table list is an old snapshot and it stops on a table it does not know, so regenerate the list first). Verified 2026-10-07 on local D1 and on a remote D1 with a production export.
+
+**Local guardrail:** `scripts/check-migrations.ts` runs as a Lefthook pre-commit step on staged `drizzle/migrations/**/*.sql`. It flags `DROP TABLE`, `TRUNCATE`, `DELETE FROM`, `ALTER TABLE … DROP COLUMN`, and annotates each `DROP TABLE` with the count of inbound `ON DELETE CASCADE` FKs. Bypass for a migration that is destructive on purpose and has been made safe for the automatic path: `bun scripts/check-migrations.ts --allow-destructive`. Note `--allow-destructive` is an argument to the SCRIPT — the Lefthook step (`lefthook.yml`) invokes it without one, so to land an intentionally destructive migration commit with `LEFTHOOK_EXCLUDE=migration-safety git commit`, NOT `--no-verify` (which also skips typecheck, lint, format and knip). A native `ALTER TABLE … DROP COLUMN` is flagged but is exactly the refactor the check asks for — it rebuilds no table, so #612 does not apply.
 
 **Schema-drift trap (#898):** drizzle-kit only diffs **top-level exported** tables — removing a table's named export from `src/platform/server/db/schema/index.ts` (e.g. in a dead-code sweep) makes the next `db:generate` emit `DROP TABLE` for it. Keep every table individually exported. And never change a column's SQL `.default()` without generating the migration in the same PR — a default change forces a full table rebuild (see trap above); prefer `$defaultFn()` for app-level defaults with no DDL impact.
 

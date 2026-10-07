@@ -11,8 +11,6 @@ import { DEFAULT_RESOLUTION, type Resolution } from '@/models/resolutions';
 import type { Database } from '@/platform/server/db/client';
 import { shotHierarchicalOrder } from '@/shots/server/db/shot-view-query';
 import {
-  characterBibleVersions,
-  characters,
   framePromptVersions,
   frames,
   frameVariants,
@@ -64,8 +62,11 @@ import {
 } from './sequence-events';
 import { ValidationError } from '@/platform/errors';
 import { demoteSequenceSheetClaims } from '@/cast/server/db/sheet-claims';
-import { deleteLooksOfCharacters } from '@/cast/server/db/character-looks';
-import { backfillCastOfSequence } from '@/platform/server/db/sequence-cast-backfill';
+import {
+  assertVoicesReleased,
+  deleteCharactersStatements,
+  voiceIdsHeldOnlyBy,
+} from '@/cast/server/db/characters';
 import {
   charactersOnlyIn,
   deleteCastStatements,
@@ -943,31 +944,49 @@ export function createSequencesMethods(
       return rows.length > 0;
     },
 
-    delete: async (sequenceId: string): Promise<void> => {
-      // A character a worker older than #2017 wrote during the deploy has
-      // no cast link yet: give it one, so it is deleted with the rest.
-      await backfillCastOfSequence(db, sequenceId);
+    /**
+     * The saved voices a hard delete of this sequence would strand: release
+     * each, then pass them to `delete`. `get` prefix on purpose: it is a
+     * read, so the workflow surface strips it.
+     */
+    getVoiceIdsToReleaseOnDelete: async (
+      sequenceId: string
+    ): Promise<string[]> =>
+      await voiceIdsHeldOnlyBy(
+        db,
+        await charactersOnlyIn(db, teamId, sequenceId)
+      ),
+
+    /**
+     * Hard-delete one of the team's sequences. Every statement names the
+     * team's sequence, so another team's id deletes nothing. Refused while a
+     * saved voice would be stranded: `releasedVoiceIds` are the ids from
+     * `getVoiceIdsToReleaseOnDelete` the caller has run through
+     * `releaseVoiceIfUnreferenced`.
+     */
+    delete: async (
+      sequenceId: string,
+      opts: { releasedVoiceIds: readonly string[] }
+    ): Promise<void> => {
+      const mine = db
+        .select({ id: sequences.id })
+        .from(sequences)
+        .where(and(eq(sequences.id, sequenceId), eq(sequences.teamId, teamId)));
       // A character belongs to the team (#2017): the sequence's cast links
-      // go, and with them only the characters nothing else holds.
-      const theirs = await charactersOnlyIn(db, sequenceId);
-      // The #1600 version tables, the #2015 looks and the #2017 cast links
-      // RESTRICT their parents' delete (the #612 rebuild trap), so they go
-      // first, in the same batch.
+      // go, and with them only the characters nothing else holds. Nothing
+      // cascades from the sequence to a character, or from a character to
+      // its rows, so all of it is deleted here, children first, in one batch.
+      const [own] = await mine;
+      const theirs = own
+        ? await charactersOnlyIn(db, teamId, sequenceId)
+        : sql`0`;
+      await assertVoicesReleased(db, theirs, opts.releasedVoiceIds);
       await db.batch([
         db
           .delete(sequenceStyleVersions)
-          .where(eq(sequenceStyleVersions.sequenceId, sequenceId)),
-        ...deleteCastStatements(db, eq(sequenceCast.sequenceId, sequenceId)),
-        db
-          .delete(characterBibleVersions)
-          .where(
-            inArray(
-              characterBibleVersions.characterId,
-              db.select({ id: characters.id }).from(characters).where(theirs)
-            )
-          ),
-        ...deleteLooksOfCharacters(db, theirs),
-        db.delete(characters).where(theirs),
+          .where(inArray(sequenceStyleVersions.sequenceId, mine)),
+        ...deleteCastStatements(db, inArray(sequenceCast.sequenceId, mine)),
+        ...deleteCharactersStatements(db, theirs),
         db
           .delete(locationBibleVersions)
           .where(
@@ -976,10 +995,10 @@ export function createSequencesMethods(
               db
                 .select({ id: sequenceLocations.id })
                 .from(sequenceLocations)
-                .where(eq(sequenceLocations.sequenceId, sequenceId))
+                .where(inArray(sequenceLocations.sequenceId, mine))
             )
           ),
-        db.delete(sequences).where(eq(sequences.id, sequenceId)),
+        db.delete(sequences).where(inArray(sequences.id, mine)),
       ]);
       // An automatic style has no FK to its sequence (#1213); drop it here.
       await db
