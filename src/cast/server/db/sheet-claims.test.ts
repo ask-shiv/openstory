@@ -15,6 +15,7 @@ import {
   characterBibleVersions,
   characterLookVersions,
   characterLooks,
+  sequenceCastLooks,
   characterSheetVariants,
   characters,
   sceneScriptVersions,
@@ -123,7 +124,7 @@ beforeEach(async () => {
   if (!lib || !tal) throw new Error('setup');
   libraryId = lib.id;
   talentId = tal.id;
-  const ch = await createCharactersMethods(db).create(
+  const ch = await createCharactersMethods(db, teamId).create(
     {
       sequenceId,
       characterId: 'char_001',
@@ -148,9 +149,15 @@ beforeEach(async () => {
   locationId = loc.id;
 });
 
-const chars = () => createCharactersMethods(db);
-const looks = () => createCharacterLooksMethods(db);
-const charVersions = () => createCharacterSheetVariantsMethods(db);
+const chars = () => createCharactersMethods(db, teamId);
+const castWith = (to: string | null) =>
+  chars().updateBible(
+    characterId,
+    {},
+    { actorId: null, source: 'recast', talentId: to }
+  );
+const looks = () => createCharacterLooksMethods(db, teamId);
+const charVersions = () => createCharacterSheetVariantsMethods(db, teamId);
 const locs = () => createSequenceLocationsMethods(db);
 const locVersions = () => createLocationSheetVariantsMethods(db);
 const library = () => createLocationsMethods(db, teamId, userId);
@@ -350,7 +357,7 @@ describe('character sheet claims', () => {
 
   it('is revoked by a recast and by a change to the cast talent', async () => {
     let versionId = await claim();
-    await chars().updateTalent(characterId, talentId);
+    await castWith(talentId);
     expect(await landCharacter(versionId)).toBe('parked');
 
     versionId = await claim();
@@ -507,7 +514,7 @@ describe('look sheet claims (#2015)', () => {
     ).toBe(false);
 
     const recast = await snapshotOf(characterId);
-    await chars().updateTalent(characterId, null);
+    await castWith(null);
     expect(
       (await looks().claimSheet(characterId, recast, { markGenerating: true }))
         .held
@@ -728,6 +735,7 @@ describe('look sheet claims (#2015)', () => {
 
   it('fills in the default look of a character an older worker wrote', async () => {
     // What a pre-#2015 worker leaves: no look, state on the legacy columns.
+    await db.delete(sequenceCastLooks);
     await db.delete(characterLookVersions);
     await db.delete(characterLooks);
     await db
@@ -1002,9 +1010,9 @@ describe('re-analysis upserts (#1113)', () => {
 
   it('a pointer-only claim leaves the status alone', async () => {
     await db
-      .update(characterLooks)
+      .update(sequenceCastLooks)
       .set({ sheetStatus: 'completed' })
-      .where(eq(characterLooks.id, characterId));
+      .where(eq(sequenceCastLooks.lookId, characterId));
     await looks().claimSheet(characterId, await snapshotOf(characterId), {
       markGenerating: false,
     });

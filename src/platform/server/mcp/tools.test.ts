@@ -25,7 +25,9 @@ vi.mock('@/cast/server/talent/analyze-talent-media', () => ({
   analyzeTalentMediaForTeam: vi.fn(),
 }));
 import {
-  characters,
+  characterBibleVersions,
+  sequenceCast,
+  sequenceCastLooks,
   characterSheetVariants,
   characterVoiceVersions,
   sequenceLocations,
@@ -66,6 +68,7 @@ import { getDb } from '#db-client';
 import type { Database } from '@/platform/server/db/client';
 // oxlint-disable-next-line boundaries/no-scoped-factory -- exercise real team-scoped repositories, not mocked authorization
 import { createScopedDb } from '@/platform/server/db/scoped';
+import type { NewCharacter } from '@/platform/server/db/schema';
 import { generateId } from '@/platform/id';
 import { relations } from '@/platform/server/db/schema/relations';
 import {
@@ -104,6 +107,12 @@ let actorId: string;
 let imageId: string;
 let videoId: string;
 let scopedDb: ReturnType<typeof createScopedDb>;
+/** A character as analysis writes it: bible version, cast link, default look. */
+const castCharacter = (character: NewCharacter) =>
+  createScopedDb(teamId, actorId).characters.create(character, {
+    source: 'analysis',
+    createdBy: null,
+  });
 const queries: string[] = [];
 async function call(name: string, args: Record<string, unknown> = {}) {
   const response = await mcpServer.handle(
@@ -766,13 +775,13 @@ describe('complete production reads', () => {
     eventId = generateId();
     musicId = generateId();
     musicPromptId = generateId();
-    await db.insert(characters).values({
+    await castCharacter({
       id: characterId,
       sequenceId,
       characterId: 'char_001',
-      legacyName: 'Ada',
-      legacyPersonality: 'Curious',
-      legacyConsistencyTag: 'ada',
+      name: 'Ada',
+      personality: 'Curious',
+      consistencyTag: 'ada',
       selectedVoiceVersionId: characterId,
     });
     await db.insert(characterVoiceVersions).values({
@@ -1006,11 +1015,11 @@ describe('complete production reads', () => {
     });
   });
   it('pages entities and binds cursors to collection, sequence, and reference target', async () => {
-    await db.insert(characters).values({
+    await castCharacter({
       id: generateId(),
       sequenceId,
       characterId: 'char_002',
-      legacyName: 'Other',
+      name: 'Other',
     });
     const pageSchema = z.object({
       characters: z.array(z.object({ id: z.string() })),
@@ -1044,7 +1053,7 @@ describe('complete production reads', () => {
       })
     ).toMatchObject({ isError: true });
     expect(
-      queries.some((query) => /from "characters".*limit \?/i.test(query))
+      queries.some((query) => /from "sequence_cast".*limit \?/i.test(query))
     ).toBe(true);
   });
   it('uses effective style snapshots and reads original versus composed script with revision-safe windows', async () => {
@@ -1283,9 +1292,9 @@ describe('complete production reads', () => {
       })
     ).toMatchObject({ isError: true });
     await db
-      .update(characters)
-      .set({ deletedAt: new Date() })
-      .where(eq(characters.id, characterId));
+      .update(sequenceCast)
+      .set({ removedAt: new Date() })
+      .where(eq(sequenceCast.characterId, characterId));
     expect(await data('list_characters', { sequenceId })).toMatchObject({
       characters: [],
     });
@@ -1423,9 +1432,9 @@ describe('complete production reads', () => {
       queries.some((query) => /^(insert|update|delete)\b/i.test(query))
     ).toBe(false);
     await db
-      .update(characters)
-      .set({ legacyVoiceOnly: true })
-      .where(eq(characters.id, characterId));
+      .update(characterBibleVersions)
+      .set({ voiceOnly: true })
+      .where(eq(characterBibleVersions.characterId, characterId));
     expect(
       await data('get_reference_staleness', {
         sequenceId,
@@ -2159,12 +2168,12 @@ describe('update_scene (#1459)', () => {
 
 describe('update_scene continuity (#1459)', () => {
   it('rescans @-mentions into continuity, merges sent keys and records only moved fields', async () => {
-    await db.insert(characters).values({
+    await castCharacter({
       id: generateId(),
       sequenceId,
       characterId: 'char_001',
-      legacyName: 'Ada',
-      legacyConsistencyTag: 'ada',
+      name: 'Ada',
+      consistencyTag: 'ada',
     });
     const read = z.object({ script: z.object({ id: z.string() }) });
     const written = z.object({ scriptVersionId: z.string() });
@@ -2906,15 +2915,17 @@ describe('cast and music edits (#1979)', () => {
       generateId(),
       generateId(),
     ];
-    await db.insert(characters).values({
+    await castCharacter({
       id: characterId,
       sequenceId,
       characterId: 'char_ada',
-      legacyName: 'Ada',
+      name: 'Ada',
       selectedVoiceVersionId: newer,
-      // No look row: the shape a worker older than #2015 leaves.
-      legacySelectedSheetVersionId: sheetB,
     });
+    await db
+      .update(sequenceCastLooks)
+      .set({ selectedSheetVersionId: sheetB })
+      .where(eq(sequenceCastLooks.lookId, characterId));
     await db.insert(characterVoiceVersions).values([
       {
         id: older,
@@ -3374,11 +3385,11 @@ describe('cast and music edits (#1979)', () => {
   it('refuses cast and tracks of another sequence', async () => {
     const characterId = generateId();
     const track = generateId();
-    await db.insert(characters).values({
+    await castCharacter({
       id: characterId,
       sequenceId,
       characterId: 'char_ada',
-      legacyName: 'Ada',
+      name: 'Ada',
     });
     await db.insert(sequenceMusicVariants).values({
       id: track,
@@ -4084,15 +4095,14 @@ describe('production-context resources (#1462)', () => {
   });
 
   it('shrinks an over-budget bible to fit, with a real cursor to continue', async () => {
-    await db.insert(characters).values(
-      Array.from({ length: 30 }, (_, i) => ({
-        id: generateId(),
+    for (let i = 0; i < 30; i++) {
+      await castCharacter({
         sequenceId,
         characterId: `char_${i}`,
-        legacyName: `C${i}`,
-        legacyPersonality: 'x'.repeat(8000),
-      }))
-    );
+        name: `C${i}`,
+        personality: 'x'.repeat(8000),
+      });
+    }
     const bible = z
       .object({
         characters: z.array(z.unknown()),
