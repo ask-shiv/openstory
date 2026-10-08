@@ -1,44 +1,41 @@
 import { Button } from '@/ui/shadcn/button';
-import { cn } from '@/ui/utils';
-import { Eraser, PencilLine, RotateCcw, Trash2 } from 'lucide-react';
-import {
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-  type PointerEvent,
-} from 'react';
+import { useCallback, useRef, useState, type PointerEvent } from 'react';
+import { toast } from 'sonner';
 
 type DrawingTool = 'pen' | 'erase';
 
+type Point = { readonly x: number; readonly y: number };
+
+type Stroke = { readonly pointerId: number; last: Point };
+
 type StudioDrawingCanvasProps = {
-  className?: string;
-  disabled?: boolean;
-  onCancel: () => void;
-  onSubmit: (file: File) => Promise<void> | void;
+  readonly onCancel: () => void;
+  readonly onSubmit: (file: File) => void;
 };
 
 const CANVAS_WIDTH = 960;
 const CANVAS_HEIGHT = 540;
+// ponytail: each step is a full-frame snapshot (~2 MB), so 25 steps hold
+// ~50 MB while the modal is open. Store strokes and replay if that bites.
 const MAX_UNDO_STEPS = 25;
 const STROKE_WIDTH = 8;
 const PEN_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cpath fill='%23111111' d='M22.8 4.5a2.4 2.4 0 0 1 3.4 0l1.3 1.3a2.4 2.4 0 0 1 0 3.4l-2 2-4.7-4.7 2-2Z'/%3E%3Cpath fill='%23111111' d='m7.7 20.2 12-12 4.7 4.7-12 12-5.5.8z'/%3E%3Cpath fill='%23ffffff' d='m8.5 19.4 4.1 4.1-4.9.8z'/%3E%3C/g%3E%3C/svg%3E") 4 28, crosshair`;
 
-type BlobCanvas = Pick<HTMLCanvasElement, 'toBlob'>;
-
-export function isBlankSnapshot(snapshot: ImageData) {
+/** Blank means every channel is 255: the canvas is always opaque white underneath. */
+export function isBlankSnapshot(snapshot: ImageData): boolean {
   return snapshot.data.every((value) => value === 255);
 }
 
 export function appendUndoSnapshot(
-  previous: ImageData[],
-  snapshot: ImageData | null
-) {
-  if (!snapshot) return previous;
+  previous: readonly ImageData[],
+  snapshot: ImageData
+): readonly ImageData[] {
   return [...previous.slice(-(MAX_UNDO_STEPS - 1)), snapshot];
 }
 
-export async function canvasToPngFile(canvas: BlobCanvas, now = Date.now) {
+export async function canvasToPngFile(
+  canvas: Pick<HTMLCanvasElement, 'toBlob'>
+): Promise<File> {
   const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((next) => {
       if (next) resolve(next);
@@ -46,243 +43,193 @@ export async function canvasToPngFile(canvas: BlobCanvas, now = Date.now) {
     }, 'image/png');
   });
 
-  return new File([blob], `reference-drawing-${now()}.png`, {
+  return new File([blob], `reference-drawing-${Date.now()}.png`, {
     type: 'image/png',
   });
 }
 
-function drawStroke(
+function paintBlank(context: CanvasRenderingContext2D): void {
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+}
+
+function snapshotOf(context: CanvasRenderingContext2D): ImageData {
+  return context.getImageData(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+}
+
+function drawSegment(
   context: CanvasRenderingContext2D,
   tool: DrawingTool,
-  from: { x: number; y: number },
-  to: { x: number; y: number }
-) {
-  context.save();
+  from: Point,
+  to: Point
+): void {
   context.strokeStyle = tool === 'erase' ? '#ffffff' : '#111111';
-  context.lineWidth = STROKE_WIDTH;
-  context.lineCap = 'round';
-  context.lineJoin = 'round';
   context.beginPath();
   context.moveTo(from.x, from.y);
   context.lineTo(to.x, to.y);
   context.stroke();
-  context.restore();
+}
+
+function pointFromEvent(event: PointerEvent<HTMLCanvasElement>): Point {
+  const rect = event.currentTarget.getBoundingClientRect();
+  return {
+    x: ((event.clientX - rect.left) / rect.width) * CANVAS_WIDTH,
+    y: ((event.clientY - rect.top) / rect.height) * CANVAS_HEIGHT,
+  };
 }
 
 export function StudioDrawingCanvas({
-  className,
-  disabled = false,
   onCancel,
   onSubmit,
 }: StudioDrawingCanvasProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const pointerIdRef = useRef<number | null>(null);
-  const lastPointRef = useRef<{ x: number; y: number } | null>(null);
-  const strokeStartedRef = useRef(false);
-  const pendingSnapshotRef = useRef<ImageData | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const strokeRef = useRef<Stroke | null>(null);
   const [tool, setTool] = useState<DrawingTool>('pen');
-  const [undoStack, setUndoStack] = useState<ImageData[]>([]);
+  const [undoStack, setUndoStack] = useState<readonly ImageData[]>([]);
   const [hasInk, setHasInk] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const context = canvas.getContext('2d');
+  // Stable identity: React re-runs a ref callback whenever it changes, and a
+  // re-run would paint over the drawing.
+  const initCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
+    canvasRef.current = canvas;
+    const context = canvas?.getContext('2d');
     if (!context) return;
-    context.fillStyle = '#ffffff';
-    context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    context.lineWidth = STROKE_WIDTH;
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    paintBlank(context);
   }, []);
-
-  const canvasCursorStyle: CSSProperties = {
-    cursor: PEN_CURSOR,
-  };
 
   const getContext = (): CanvasRenderingContext2D | null =>
     canvasRef.current?.getContext('2d') ?? null;
 
-  const pointFromEvent = (event: PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return null;
-    return {
-      x: ((event.clientX - rect.left) / rect.width) * CANVAS_WIDTH,
-      y: ((event.clientY - rect.top) / rect.height) * CANVAS_HEIGHT,
-    };
+  // The canvas is the only word on whether there is ink: an eraser can empty
+  // it, and an undo can bring it back.
+  const syncInk = (context: CanvasRenderingContext2D) => {
+    const inked = !isBlankSnapshot(snapshotOf(context));
+    setHasInk(inked);
+    if (!inked) setTool('pen');
   };
 
-  const captureSnapshot = (): ImageData | null => {
-    const context = getContext();
-    if (!context) return null;
-    return context.getImageData(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-  };
-
-  const resetCanvas = () => {
-    const context = getContext();
-    if (!context) return;
-    context.fillStyle = '#ffffff';
-    context.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-  };
-
-  const pushUndoSnapshot = (snapshot: ImageData | null) => {
+  const pushUndo = (context: CanvasRenderingContext2D) => {
+    const snapshot = snapshotOf(context);
     setUndoStack((previous) => appendUndoSnapshot(previous, snapshot));
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLCanvasElement>) => {
-    if (disabled || submitting) return;
+    const context = getContext();
+    if (!context || strokeRef.current || event.button !== 0) return;
     const point = pointFromEvent(event);
-    const canvas = canvasRef.current;
-    if (!point || !canvas) return;
-    pendingSnapshotRef.current = captureSnapshot();
-    strokeStartedRef.current = false;
-    pointerIdRef.current = event.pointerId;
-    lastPointRef.current = point;
-    canvas.setPointerCapture(event.pointerId);
+    pushUndo(context);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    strokeRef.current = { pointerId: event.pointerId, last: point };
+    drawSegment(context, tool, point, point);
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLCanvasElement>) => {
-    if (pointerIdRef.current !== event.pointerId) return;
-    const point = pointFromEvent(event);
     const context = getContext();
-    const previous = lastPointRef.current;
-    if (!point || !context || !previous) return;
-    drawStroke(context, tool, previous, point);
-    lastPointRef.current = point;
-    strokeStartedRef.current = true;
-    setHasInk(true);
+    const stroke = strokeRef.current;
+    if (!context || stroke?.pointerId !== event.pointerId) return;
+    const point = pointFromEvent(event);
+    drawSegment(context, tool, stroke.last, point);
+    stroke.last = point;
   };
 
   const finishStroke = (event: PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (pointerIdRef.current !== event.pointerId || !canvas) return;
-    const point = pointFromEvent(event);
     const context = getContext();
-    const previous = lastPointRef.current;
-    if (point && context && previous && !strokeStartedRef.current) {
-      drawStroke(context, tool, previous, point);
-      setHasInk(true);
-      strokeStartedRef.current = true;
-    }
-    if (strokeStartedRef.current) {
-      pushUndoSnapshot(pendingSnapshotRef.current);
-    }
-    pendingSnapshotRef.current = null;
-    strokeStartedRef.current = false;
-    lastPointRef.current = null;
-    pointerIdRef.current = null;
-    canvas.releasePointerCapture(event.pointerId);
+    if (!context || strokeRef.current?.pointerId !== event.pointerId) return;
+    strokeRef.current = null;
+    syncInk(context);
   };
 
   const handleUndo = () => {
     const context = getContext();
-    if (!context || undoStack.length === 0 || disabled || submitting) return;
-    const snapshot = undoStack[undoStack.length - 1];
-    if (!snapshot) return;
+    const snapshot = undoStack.at(-1);
+    if (!context || !snapshot) return;
     context.putImageData(snapshot, 0, 0);
     setUndoStack((previous) => previous.slice(0, -1));
-    setHasInk(!isBlankSnapshot(snapshot));
+    syncInk(context);
   };
 
   const handleClear = () => {
-    if (!hasInk || disabled || submitting) return;
-    pushUndoSnapshot(captureSnapshot());
-    resetCanvas();
-    setHasInk(false);
+    const context = getContext();
+    if (!context) return;
+    pushUndo(context);
+    paintBlank(context);
+    syncInk(context);
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     const canvas = canvasRef.current;
-    if (!canvas || !hasInk || disabled || submitting) return;
-    setSubmitting(true);
-    try {
-      const file = await canvasToPngFile(canvas);
-      await onSubmit(file);
-    } finally {
-      setSubmitting(false);
-    }
+    if (!canvas) return;
+    void canvasToPngFile(canvas).then(onSubmit, () =>
+      toast.error('Could not export the drawing')
+    );
   };
 
   return (
-    <div className={cn('flex flex-col gap-4 p-4', className)}>
+    <div className="flex flex-col gap-4 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
           variant={tool === 'pen' ? 'default' : 'outline'}
           size="sm"
-          disabled={disabled || submitting}
+          aria-pressed={tool === 'pen'}
           onClick={() => setTool('pen')}
         >
-          <PencilLine aria-hidden="true" />
           Pen
         </Button>
         <Button
           type="button"
           variant={tool === 'erase' ? 'default' : 'outline'}
           size="sm"
-          disabled={disabled || submitting || !hasInk}
+          aria-pressed={tool === 'erase'}
+          disabled={!hasInk}
           onClick={() => setTool('erase')}
         >
-          <Eraser aria-hidden="true" />
           Erase
         </Button>
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          disabled={disabled || submitting || undoStack.length === 0}
+          disabled={undoStack.length === 0}
           onClick={handleUndo}
         >
-          <RotateCcw aria-hidden="true" />
           Undo
         </Button>
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          disabled={disabled || submitting || !hasInk}
+          disabled={!hasInk}
           onClick={handleClear}
         >
-          <Trash2 aria-hidden="true" />
           Clear
         </Button>
       </div>
 
-      <div className="rounded-lg border bg-muted/40 p-3">
-        <canvas
-          ref={canvasRef}
-          width={CANVAS_WIDTH}
-          height={CANVAS_HEIGHT}
-          aria-label="Drawing canvas"
-          className="block aspect-video w-full rounded-md border bg-white shadow-xs"
-          style={canvasCursorStyle}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={finishStroke}
-          onPointerCancel={finishStroke}
-          onPointerLeave={(event) => {
-            if (pointerIdRef.current === event.pointerId) finishStroke(event);
-          }}
-        />
-      </div>
+      <canvas
+        ref={initCanvas}
+        width={CANVAS_WIDTH}
+        height={CANVAS_HEIGHT}
+        aria-label="Drawing canvas"
+        className="block aspect-video w-full touch-none rounded-md border"
+        style={{ cursor: PEN_CURSOR }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={finishStroke}
+        onPointerCancel={finishStroke}
+      />
 
-      <p className="text-sm text-muted-foreground">Click to draw.</p>
+      <p className="text-sm text-muted-foreground">Drag to draw.</p>
 
       <div className="flex justify-end gap-2">
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={submitting}
-          onClick={onCancel}
-        >
+        <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
-        <Button
-          type="button"
-          disabled={!hasInk || submitting}
-          onClick={() => void handleSubmit()}
-        >
-          {submitting ? 'Adding…' : 'Add drawing'}
+        <Button type="button" disabled={!hasInk} onClick={handleSubmit}>
+          Add drawing
         </Button>
       </div>
     </div>

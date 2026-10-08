@@ -16,18 +16,20 @@ function makeImageData(fill = 255): ImageData {
 
 describe('canvasToPngFile', () => {
   it('exports a PNG file with the expected name', async () => {
+    const types: (string | null | undefined)[] = [];
     const canvas = {
       toBlob(callback: BlobCallback, type?: string | null) {
-        expect(type).toBe('image/png');
+        types.push(type);
         callback(new Blob(['png'], { type: 'image/png' }));
       },
     };
 
-    const file = await canvasToPngFile(canvas, () => 123456);
+    const file = await canvasToPngFile(canvas);
 
+    expect(types).toEqual(['image/png']);
     expect(file).toBeInstanceOf(File);
     expect(file.type).toBe('image/png');
-    expect(file.name).toBe('reference-drawing-123456.png');
+    expect(file.name).toMatch(/^reference-drawing-\d+\.png$/);
   });
 
   it('throws when the canvas export fails', async () => {
@@ -56,19 +58,24 @@ describe('isBlankSnapshot', () => {
 });
 
 describe('appendUndoSnapshot', () => {
-  it('ignores null snapshots', () => {
-    const previous = [makeImageData(1)];
-    expect(appendUndoSnapshot(previous, null)).toEqual(previous);
+  it('drops nothing below the cap', () => {
+    const snapshots = Array.from({ length: 24 }, (_, index) =>
+      makeImageData(index)
+    );
+    const next = appendUndoSnapshot(snapshots, makeImageData(24));
+
+    expect(next).toHaveLength(25);
+    expect(next[0]?.data[0]).toBe(0);
   });
 
   it('keeps only the latest 25 snapshots', () => {
     const snapshots = Array.from({ length: 25 }, (_, index) =>
       makeImageData(index)
     );
-    const next = appendUndoSnapshot(snapshots, makeImageData(26));
+    const next = appendUndoSnapshot(snapshots, makeImageData(25));
 
     expect(next).toHaveLength(25);
     expect(next[0]?.data[0]).toBe(1);
-    expect(next.at(-1)?.data[0]).toBe(26);
+    expect(next.at(-1)?.data[0]).toBe(25);
   });
 });

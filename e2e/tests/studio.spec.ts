@@ -66,12 +66,42 @@ test.describe('Images and Videos studio', () => {
     await expect(dialog).toBeVisible();
     await dialog.getByRole('button', { name: 'Draw' }).click();
     await expect(dialog.getByLabel('Drawing canvas')).toBeVisible();
-    await expect(dialog.getByText('Click to draw.')).toBeVisible();
-    await expect(
-      dialog.getByRole('button', { name: 'Add drawing' })
-    ).toBeDisabled();
-    await expect(dialog.getByRole('button', { name: 'Undo' })).toBeDisabled();
-    await expect(dialog.getByRole('button', { name: 'Erase' })).toBeVisible();
+    const add = dialog.getByRole('button', { name: 'Add drawing' });
+    const erase = dialog.getByRole('button', { name: 'Erase' });
+    const undo = dialog.getByRole('button', { name: 'Undo' });
+    await expect(add).toBeDisabled();
+    await expect(undo).toBeDisabled();
+    await expect(erase).toBeDisabled();
+
+    const box = await dialog.getByLabel('Drawing canvas').boundingBox();
+    if (!box) throw new Error('Drawing canvas has no box');
+    const stroke = async () => {
+      await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.6, {
+        steps: 5,
+      });
+      await page.mouse.up();
+    };
+
+    await stroke();
+    await expect(add).toBeEnabled();
+    await expect(erase).toBeEnabled();
+
+    // Rubbing out or clearing everything leaves nothing to add, and the
+    // eraser cannot be the tool on a blank canvas.
+    await erase.click();
+    await dialog.getByRole('button', { name: 'Clear' }).click();
+    await expect(add).toBeDisabled();
+    await expect(dialog.getByRole('button', { name: 'Pen' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+
+    await undo.click();
+    await expect(add).toBeEnabled();
+    await add.click();
+    await expect(dialog).toBeHidden();
   });
 
   test('signed-in user can open Models from the sidebar', async ({ page }) => {

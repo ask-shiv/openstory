@@ -1,7 +1,10 @@
 /**
  * The `+` panel for the studio composer (#1274): a left nav of sources
- * (Generations / Sequences / Cast / Locations / Audio), a tile grid on the
- * right with multi-select ticks, and Upload in the corner. Sequences drill
+ * (Generations / Uploads / Sequences / Cast / Locations / Audio / Draw), a
+ * tile grid on the right with multi-select ticks, and Upload in the corner.
+ * Draw swaps the grid for a freehand canvas whose PNG goes through the same
+ * upload as a picked file, so it is offered only while an image slot is free.
+ * Sequences drill
  * in: pick a sequence, then any of its shots (stills and clips), elements,
  * cast, or locations. Picking hands back stored URLs + labels + kind; the
  * composer decides whether they become `@ImageN` / `@VideoN` / `@AudioN`,
@@ -422,7 +425,11 @@ export function StudioReferencePicker({
   const [sequenceId, setSequenceId] = useState<string | null>(null);
   const [pending, setPending] = useState<StudioReference[]>([]);
   const { data: sequences } = useSequencesWithShots();
-  const sources = SOURCES.filter((s) => s.key !== 'audio' || slots.audio > 0);
+  const sources = SOURCES.filter(
+    (s) =>
+      (s.key !== 'audio' || slots.audio > 0) &&
+      (s.key !== 'draw' || slots.image > 0)
+  );
   const openSequence = sequenceId
     ? sequences.find((s) => s.id === sequenceId)
     : undefined;
